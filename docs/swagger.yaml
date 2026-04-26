@@ -1,0 +1,632 @@
+basePath: /
+definitions:
+  addwallet.ErrorResponse:
+    properties:
+      error_code:
+        example: missing_name
+        type: string
+      message:
+        example: name is required
+        type: string
+    type: object
+  addwallet.Request:
+    properties:
+      category:
+        example: savings
+        type: string
+      currency:
+        example: EUR
+        type: string
+      description:
+        example: My savings wallet
+        type: string
+      initial_amount:
+        example: 10000
+        type: integer
+      name:
+        example: Savings
+        type: string
+    type: object
+  addwallet.Response:
+    properties:
+      wallet_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+  addwallet.WalletView:
+    properties:
+      category:
+        example: savings
+        type: string
+      created_at:
+        example: "2026-04-26T10:00:00Z"
+        type: string
+      currency:
+        example: EUR
+        type: string
+      current_balance:
+        example: 15000
+        type: integer
+      description:
+        example: My savings wallet
+        type: string
+      id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      last_movement_at:
+        example: "2026-04-26T12:30:00Z"
+        type: string
+      name:
+        example: Savings
+        type: string
+      user_id:
+        example: user-123
+        type: string
+    type: object
+  depositmoney.ErrorResponse:
+    properties:
+      error_code:
+        example: invalid_amount
+        type: string
+      message:
+        example: amount must be positive
+        type: string
+    type: object
+  depositmoney.Request:
+    properties:
+      amount:
+        example: 5000
+        type: integer
+      currency:
+        example: EUR
+        type: string
+      reason:
+        example: Salary
+        type: string
+    type: object
+  depositmoney.Response:
+    properties:
+      new_balance:
+        example: 15000
+        type: integer
+      wallet_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+  getusermovements.Response:
+    properties:
+      movements:
+        items:
+          $ref: '#/definitions/getusermovements.UserMovementView'
+        type: array
+    type: object
+  getusermovements.UserMovementView:
+    properties:
+      amount:
+        example: 5000
+        type: integer
+      category:
+        example: food
+        type: string
+      currency:
+        example: EUR
+        type: string
+      id:
+        example: 880e8400-e29b-41d4-a716-446655440000
+        type: string
+      occurred_at:
+        example: "2026-04-26T12:30:00Z"
+        type: string
+      reason:
+        example: Salary
+        type: string
+      type:
+        enum:
+        - deposit
+        - withdrawal
+        - transfer_in
+        - transfer_out
+        example: deposit
+        type: string
+      wallet_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      wallet_name:
+        example: Savings
+        type: string
+    type: object
+  getuserwallets.Response:
+    properties:
+      wallets:
+        items:
+          $ref: '#/definitions/addwallet.WalletView'
+        type: array
+    type: object
+  getwalletmovements.MovementView:
+    properties:
+      amount:
+        example: 5000
+        type: integer
+      category:
+        example: food
+        type: string
+      currency:
+        example: EUR
+        type: string
+      id:
+        example: 880e8400-e29b-41d4-a716-446655440000
+        type: string
+      occurred_at:
+        example: "2026-04-26T12:30:00Z"
+        type: string
+      reason:
+        example: Salary
+        type: string
+      type:
+        enum:
+        - deposit
+        - withdrawal
+        - transfer_in
+        - transfer_out
+        example: deposit
+        type: string
+      wallet_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+  getwalletmovements.Response:
+    properties:
+      movements:
+        items:
+          $ref: '#/definitions/getwalletmovements.MovementView'
+        type: array
+    type: object
+  login.ErrorResponse:
+    properties:
+      error_code:
+        example: invalid_credentials
+        type: string
+      message:
+        example: invalid email or password
+        type: string
+    type: object
+  login.Request:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      password:
+        example: securepass123
+        type: string
+    type: object
+  login.Response:
+    properties:
+      token:
+        example: eyJhbGciOiJIUzI1NiIs...
+        type: string
+      user_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+  register.ErrorResponse:
+    properties:
+      error_code:
+        example: email_taken
+        type: string
+      message:
+        example: email is already registered
+        type: string
+    type: object
+  register.Request:
+    properties:
+      email:
+        example: user@example.com
+        type: string
+      password:
+        example: securepass123
+        type: string
+    type: object
+  register.Response:
+    properties:
+      user_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+  transfermoney.ErrorResponse:
+    properties:
+      error_code:
+        example: same_wallet
+        type: string
+      message:
+        example: source and destination wallets must differ
+        type: string
+    type: object
+  transfermoney.Request:
+    properties:
+      amount:
+        example: 3000
+        type: integer
+      currency:
+        example: EUR
+        type: string
+      from_wallet_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+      reason:
+        example: Rent split
+        type: string
+      to_wallet_id:
+        example: 660e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+  transfermoney.Response:
+    properties:
+      transaction_id:
+        example: 770e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+  withdrawmoney.ErrorResponse:
+    properties:
+      error_code:
+        example: insufficient_funds
+        type: string
+      message:
+        example: 'cannot withdraw 2000: balance is 1500'
+        type: string
+    type: object
+  withdrawmoney.Request:
+    properties:
+      amount:
+        example: 2000
+        type: integer
+      category:
+        example: food
+        type: string
+      currency:
+        example: EUR
+        type: string
+      reason:
+        example: Groceries
+        type: string
+    type: object
+  withdrawmoney.Response:
+    properties:
+      new_balance:
+        example: 8000
+        type: integer
+      wallet_id:
+        example: 550e8400-e29b-41d4-a716-446655440000
+        type: string
+    type: object
+host: localhost:8019
+info:
+  contact: {}
+  description: Personal money management API. Manage wallets, deposits, withdrawals,
+    and transfers. All monetary amounts are in integer cents.
+  title: Money Management API
+  version: "1.0"
+paths:
+  /auth/login:
+    post:
+      consumes:
+      - application/json
+      description: Authenticates with email and password, returns a JWT bearer token
+        valid for 24 hours.
+      parameters:
+      - description: Login payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/login.Request'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/login.Response'
+        "400":
+          description: invalid_request
+          schema:
+            $ref: '#/definitions/login.ErrorResponse'
+        "401":
+          description: invalid_credentials
+          schema:
+            $ref: '#/definitions/login.ErrorResponse'
+        "500":
+          description: internal_error
+          schema:
+            $ref: '#/definitions/login.ErrorResponse'
+      summary: Login
+      tags:
+      - Auth
+  /auth/register:
+    post:
+      consumes:
+      - application/json
+      description: Creates a new user account with email and password. Password must
+        be at least 8 characters.
+      parameters:
+      - description: Registration payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/register.Request'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/register.Response'
+        "400":
+          description: Validation error (missing_email, password_too_short)
+          schema:
+            $ref: '#/definitions/register.ErrorResponse'
+        "409":
+          description: email_taken
+          schema:
+            $ref: '#/definitions/register.ErrorResponse'
+        "500":
+          description: internal_error
+          schema:
+            $ref: '#/definitions/register.ErrorResponse'
+      summary: Register a new user
+      tags:
+      - Auth
+  /movements:
+    get:
+      description: Returns all movements (deposits, withdrawals, transfers in/out)
+        across all wallets for the authenticated user, sorted by most recent first.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/getusermovements.Response'
+        "401":
+          description: unauthorized
+          schema:
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List user movements
+      tags:
+      - Movements
+  /transfers:
+    post:
+      consumes:
+      - application/json
+      description: Transfers money from one wallet to another atomically. Both wallets
+        must exist, share the same currency, and the source must have sufficient funds.
+        Amount is in integer cents.
+      parameters:
+      - description: Transfer payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/transfermoney.Request'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/transfermoney.Response'
+        "400":
+          description: Validation error (invalid_amount, same_wallet, currency_mismatch,
+            insufficient_funds)
+          schema:
+            $ref: '#/definitions/transfermoney.ErrorResponse'
+        "401":
+          description: unauthorized
+          schema:
+            $ref: '#/definitions/transfermoney.ErrorResponse'
+        "404":
+          description: wallet_not_found
+          schema:
+            $ref: '#/definitions/transfermoney.ErrorResponse'
+        "409":
+          description: concurrency_conflict
+          schema:
+            $ref: '#/definitions/transfermoney.ErrorResponse'
+        "500":
+          description: internal_error
+          schema:
+            $ref: '#/definitions/transfermoney.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Transfer money
+      tags:
+      - Transfers
+  /wallets:
+    get:
+      description: Returns all wallets belonging to the authenticated user, including
+        current balances.
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/getuserwallets.Response'
+        "401":
+          description: unauthorized
+          schema:
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List user wallets
+      tags:
+      - Wallets
+    post:
+      consumes:
+      - application/json
+      description: Creates a new wallet with an initial balance. All amounts are in
+        integer cents.
+      parameters:
+      - description: Wallet creation payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/addwallet.Request'
+      produces:
+      - application/json
+      responses:
+        "201":
+          description: Created
+          schema:
+            $ref: '#/definitions/addwallet.Response'
+        "400":
+          description: Validation error (missing_name, invalid_initial_amount, invalid_currency,
+            invalid_category)
+          schema:
+            $ref: '#/definitions/addwallet.ErrorResponse'
+        "401":
+          description: unauthorized
+          schema:
+            $ref: '#/definitions/addwallet.ErrorResponse'
+        "409":
+          description: max_wallets_reached
+          schema:
+            $ref: '#/definitions/addwallet.ErrorResponse'
+        "500":
+          description: internal_error
+          schema:
+            $ref: '#/definitions/addwallet.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Create a wallet
+      tags:
+      - Wallets
+  /wallets/{id}/deposit:
+    post:
+      consumes:
+      - application/json
+      description: Deposits money into an existing wallet. Amount is in integer cents.
+      parameters:
+      - description: Wallet ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Deposit payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/depositmoney.Request'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/depositmoney.Response'
+        "400":
+          description: Validation error (invalid_amount, currency_mismatch)
+          schema:
+            $ref: '#/definitions/depositmoney.ErrorResponse'
+        "401":
+          description: unauthorized
+          schema:
+            $ref: '#/definitions/depositmoney.ErrorResponse'
+        "404":
+          description: wallet_not_found
+          schema:
+            $ref: '#/definitions/depositmoney.ErrorResponse'
+        "500":
+          description: internal_error
+          schema:
+            $ref: '#/definitions/depositmoney.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Deposit money
+      tags:
+      - Wallets
+  /wallets/{id}/movements:
+    get:
+      description: Returns all movements (deposits, withdrawals, transfers in/out)
+        for a wallet, ordered by occurrence.
+      parameters:
+      - description: Wallet ID
+        in: path
+        name: id
+        required: true
+        type: string
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/getwalletmovements.Response'
+        "401":
+          description: unauthorized
+          schema:
+            type: object
+      security:
+      - BearerAuth: []
+      summary: List wallet movements
+      tags:
+      - Wallets
+  /wallets/{id}/withdraw:
+    post:
+      consumes:
+      - application/json
+      description: Withdraws money from an existing wallet. Amount is in integer cents.
+        Fails if balance would go negative.
+      parameters:
+      - description: Wallet ID
+        in: path
+        name: id
+        required: true
+        type: string
+      - description: Withdrawal payload
+        in: body
+        name: body
+        required: true
+        schema:
+          $ref: '#/definitions/withdrawmoney.Request'
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            $ref: '#/definitions/withdrawmoney.Response'
+        "400":
+          description: Validation error (invalid_amount, currency_mismatch, invalid_category,
+            insufficient_funds)
+          schema:
+            $ref: '#/definitions/withdrawmoney.ErrorResponse'
+        "401":
+          description: unauthorized
+          schema:
+            $ref: '#/definitions/withdrawmoney.ErrorResponse'
+        "404":
+          description: wallet_not_found
+          schema:
+            $ref: '#/definitions/withdrawmoney.ErrorResponse'
+        "500":
+          description: internal_error
+          schema:
+            $ref: '#/definitions/withdrawmoney.ErrorResponse'
+      security:
+      - BearerAuth: []
+      summary: Withdraw money
+      tags:
+      - Wallets
+schemes:
+- http
+securityDefinitions:
+  BearerAuth:
+    in: header
+    name: Authorization
+    type: apiKey
+swagger: "2.0"

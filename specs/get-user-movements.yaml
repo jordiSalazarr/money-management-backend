@@ -1,0 +1,43 @@
+slice: getusermovements
+aggregate: none
+read_only: true
+
+queries:
+  - name: GetUserMovements
+    fields: []
+
+commands: []
+events: []
+invariants: []
+
+read_models:
+  - name: UserMovements
+    existing: true
+    composes:
+      - WalletsProjector
+      - MovementsProjector
+    fields:
+      - name: id
+        type: string
+        description: Movement ID (from MovementsProjector)
+      - name: wallet_id
+        type: string
+        description: Which wallet this movement belongs to
+      - name: wallet_name
+        type: string
+        description: Enriched from WalletsProjector
+      - name: type
+        type: string
+        description: "deposit, withdrawal, transfer_in, transfer_out"
+      - name: amount
+        type: int
+        description: Always positive, type indicates direction
+      - name: currency
+        type: string
+      - name: reason
+        type: string
+      - name: category
+        type: string
+        description: Only for withdrawals, empty otherwise
+      - name: occurred_at
+        type: time.Time

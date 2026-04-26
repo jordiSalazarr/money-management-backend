@@ -1,0 +1,85 @@
+slice: withdrawmoney
+aggregate: wallet
+aggregate_id: wallet_id
+
+commands:
+  - name: WithdrawMoney
+    fields:
+      - name: wallet_id
+        type: string
+        description: Target wallet (from URL path)
+      - name: user_id
+        type: string
+        description: Hardcoded for now (no auth yet)
+      - name: amount
+        type: int
+        description: Cents. Must be > 0
+      - name: currency
+        type: string
+        description: Must match wallet's currency
+      - name: reason
+        type: string
+        optional: true
+      - name: category
+        type: string
+        description: "Enum: Food, Investment, Clothing, Travel, Entertainment, Health, Housing, Transport, Education, Subscriptions, Gifts, Other"
+
+events:
+  - name: MoneyWithdrawn
+    produced_by: WithdrawMoney
+    fields:
+      - name: wallet_id
+        type: string
+      - name: user_id
+        type: string
+      - name: amount
+        type: int
+      - name: currency
+        type: string
+      - name: reason
+        type: string
+      - name: category
+        type: string
+      - name: withdrawn_at
+        type: time.Time
+
+invariants:
+  - description: "amount must be greater than 0"
+    enforced_by: WithdrawMoney
+    error: ErrInvalidAmount
+  - description: "currency must match the wallet's existing currency"
+    enforced_by: WithdrawMoney
+    error: ErrCurrencyMismatch
+  - description: "category must be a valid withdrawal category"
+    enforced_by: WithdrawMoney
+    error: ErrInvalidCategory
+  - description: "wallet must have sufficient balance (balance >= amount)"
+    enforced_by: WithdrawMoney
+    error: ErrInsufficientFunds
+
+read_models:
+  - name: Wallets
+    fed_by:
+      - MoneyWithdrawn
+    fields:
+      - name: id
+        type: string
+        description: "= wallet_id"
+      - name: user_id
+        type: string
+      - name: name
+        type: string
+      - name: description
+        type: string
+      - name: current_balance
+        type: int
+        description: "current_balance -= amount"
+      - name: currency
+        type: string
+      - name: category
+        type: string
+      - name: created_at
+        type: time.Time
+      - name: last_movement_at
+        type: "*time.Time"
+        description: "= withdrawn_at"

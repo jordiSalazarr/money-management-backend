@@ -1,0 +1,42 @@
+slice: getuserwallets
+aggregate: none
+read_only: true
+
+queries:
+  - name: GetUserWallets
+    fields:
+      - name: user_id
+        type: string
+        description: From query string
+
+commands: []
+events: []
+invariants: []
+
+read_models:
+  - name: Wallets
+    existing: true
+    source: addwallet/projection.go
+    fed_by:
+      - WalletAdded
+      - MoneyDeposited
+      - MoneyWithdrawn
+    fields:
+      - name: id
+        type: string
+      - name: user_id
+        type: string
+      - name: name
+        type: string
+      - name: description
+        type: string
+      - name: current_balance
+        type: int
+      - name: currency
+        type: string
+      - name: category
+        type: string
+      - name: created_at
+        type: time.Time
+      - name: last_movement_at
+        type: "*time.Time"

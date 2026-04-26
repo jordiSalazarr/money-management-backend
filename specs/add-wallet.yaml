@@ -1,0 +1,89 @@
+slice: addwallet
+aggregate: wallet
+aggregate_id: wallet_id
+
+commands:
+  - name: AddWallet
+    fields:
+      - name: wallet_id
+        type: string
+        description: Server-generated UUID
+      - name: user_id
+        type: string
+        description: Hardcoded for now (no auth yet)
+      - name: name
+        type: string
+      - name: description
+        type: string
+        optional: true
+      - name: initial_amount
+        type: int
+        description: "Cents. Range: 0-10000000"
+      - name: currency
+        type: string
+        description: "Enum: EUR, USD"
+      - name: category
+        type: string
+        description: "Enum: Saving, Investment, Cash"
+
+events:
+  - name: WalletAdded
+    produced_by: AddWallet
+    fields:
+      - name: wallet_id
+        type: string
+      - name: user_id
+        type: string
+      - name: name
+        type: string
+      - name: description
+        type: string
+      - name: initial_amount
+        type: int
+      - name: currency
+        type: string
+      - name: category
+        type: string
+      - name: created_at
+        type: time.Time
+
+invariants:
+  - description: "initial_amount must be >= 0 and <= 10000000"
+    enforced_by: AddWallet
+    error: ErrInvalidInitialAmount
+  - description: "currency must be EUR or USD"
+    enforced_by: AddWallet
+    error: ErrInvalidCurrency
+  - description: "category must be Saving, Investment, or Cash"
+    enforced_by: AddWallet
+    error: ErrInvalidCategory
+  - description: "user cannot have more than 10 wallets"
+    enforced_by: pre_dispatch
+    error: ErrMaxWalletsReached
+
+read_models:
+  - name: Wallets
+    fed_by:
+      - WalletAdded
+    fields:
+      - name: id
+        type: string
+        description: "= wallet_id"
+      - name: user_id
+        type: string
+      - name: name
+        type: string
+      - name: description
+        type: string
+      - name: current_balance
+        type: int
+        description: "Starts as initial_amount"
+      - name: currency
+        type: string
+      - name: category
+        type: string
+      - name: created_at
+        type: time.Time
+      - name: last_movement_at
+        type: "*time.Time"
+        description: "Nullable - null on creation"

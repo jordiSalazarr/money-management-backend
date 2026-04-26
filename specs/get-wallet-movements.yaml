@@ -1,0 +1,44 @@
+slice: getwalletmovements
+aggregate: none
+read_only: true
+
+queries:
+  - name: GetWalletMovements
+    fields:
+      - name: wallet_id
+        type: string
+        description: From URL path
+
+commands: []
+events: []
+invariants: []
+
+read_models:
+  - name: Movements
+    existing: false
+    fed_by:
+      - MoneyDeposited
+      - MoneyWithdrawn
+      - TransactionCompleted
+    fields:
+      - name: id
+        type: string
+        description: Server-generated movement ID
+      - name: wallet_id
+        type: string
+        description: Which wallet this movement belongs to
+      - name: type
+        type: string
+        description: "deposit, withdrawal, transfer_in, transfer_out"
+      - name: amount
+        type: int
+        description: Always positive, type indicates direction
+      - name: currency
+        type: string
+      - name: reason
+        type: string
+      - name: category
+        type: string
+        description: Only for withdrawals, empty otherwise
+      - name: occurred_at
+        type: time.Time

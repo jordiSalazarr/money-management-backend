@@ -1,0 +1,120 @@
+slice: transfermoney
+aggregate: transaction
+aggregate_id: transaction_id
+
+commands:
+  - name: TransferMoney
+    fields:
+      - name: transaction_id
+        type: string
+        description: Server-generated UUID
+      - name: user_id
+        type: string
+        description: Hardcoded for now (no auth yet)
+      - name: from_wallet_id
+        type: string
+        description: Source wallet
+      - name: to_wallet_id
+        type: string
+        description: Destination wallet
+      - name: amount
+        type: int
+        description: Cents. Must be > 0
+      - name: currency
+        type: string
+        description: Must match both wallets
+      - name: reason
+        type: string
+        optional: true
+
+events:
+  - name: TransactionCreated
+    produced_by: TransferMoney
+    fields:
+      - name: transaction_id
+        type: string
+      - name: user_id
+        type: string
+      - name: from_wallet_id
+        type: string
+      - name: to_wallet_id
+        type: string
+      - name: amount
+        type: int
+      - name: currency
+        type: string
+      - name: reason
+        type: string
+      - name: created_at
+        type: time.Time
+
+  - name: TransactionCompleted
+    produced_by: TransferMoney
+    fields:
+      - name: transaction_id
+        type: string
+      - name: user_id
+        type: string
+      - name: from_wallet_id
+        type: string
+      - name: to_wallet_id
+        type: string
+      - name: amount
+        type: int
+      - name: currency
+        type: string
+      - name: reason
+        type: string
+      - name: completed_at
+        type: time.Time
+
+invariants:
+  - description: "amount must be greater than 0"
+    enforced_by: TransferMoney
+    error: ErrInvalidAmount
+  - description: "source and destination wallet must be different"
+    enforced_by: TransferMoney
+    error: ErrSameWallet
+  - description: "both wallets must exist"
+    enforced_by: TransferMoney
+    error: ErrWalletNotFound
+  - description: "currency must match source wallet's currency"
+    enforced_by: TransferMoney
+    error: ErrCurrencyMismatch
+  - description: "currency must match destination wallet's currency"
+    enforced_by: TransferMoney
+    error: ErrCurrencyMismatch
+  - description: "source wallet must have sufficient balance"
+    enforced_by: TransferMoney
+    error: ErrInsufficientFunds
+
+read_models:
+  - name: Transactions
+    fed_by:
+      - TransactionCreated
+      - TransactionCompleted
+    fields:
+      - name: transaction_id
+        type: string
+        description: "= aggregate ID"
+      - name: user_id
+        type: string
+      - name: from_wallet_id
+        type: string
+      - name: to_wallet_id
+        type: string
+      - name: amount
+        type: int
+      - name: currency
+        type: string
+      - name: reason
+        type: string
+      - name: status
+        type: string
+        description: "CREATED → COMPLETED"
+      - name: created_at
+        type: time.Time
+        description: "From TransactionCreated"
+      - name: completed_at
+        type: "*time.Time"
+        description: "From TransactionCompleted, nullable until completed"

@@ -1,0 +1,74 @@
+slice: depositmoney
+aggregate: wallet
+aggregate_id: wallet_id
+
+commands:
+  - name: DepositMoney
+    fields:
+      - name: wallet_id
+        type: string
+        description: Target wallet (from URL path)
+      - name: user_id
+        type: string
+        description: Hardcoded for now (no auth yet)
+      - name: amount
+        type: int
+        description: Cents. Must be > 0
+      - name: currency
+        type: string
+        description: Must match wallet's currency
+      - name: reason
+        type: string
+        optional: true
+
+events:
+  - name: MoneyDeposited
+    produced_by: DepositMoney
+    fields:
+      - name: wallet_id
+        type: string
+      - name: user_id
+        type: string
+      - name: amount
+        type: int
+      - name: currency
+        type: string
+      - name: reason
+        type: string
+      - name: deposited_at
+        type: time.Time
+
+invariants:
+  - description: "amount must be greater than 0"
+    enforced_by: DepositMoney
+    error: ErrInvalidAmount
+  - description: "currency must match the wallet's existing currency"
+    enforced_by: DepositMoney
+    error: ErrCurrencyMismatch
+
+read_models:
+  - name: Wallets
+    fed_by:
+      - MoneyDeposited
+    fields:
+      - name: id
+        type: string
+        description: "= wallet_id"
+      - name: user_id
+        type: string
+      - name: name
+        type: string
+      - name: description
+        type: string
+      - name: current_balance
+        type: int
+        description: "current_balance += amount"
+      - name: currency
+        type: string
+      - name: category
+        type: string
+      - name: created_at
+        type: time.Time
+      - name: last_movement_at
+        type: "*time.Time"
+        description: "= deposited_at"
