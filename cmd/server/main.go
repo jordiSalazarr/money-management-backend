@@ -21,6 +21,10 @@ import (
 	"github.com/jordisalazar/money-management/auth"
 	"github.com/jordisalazar/money-management/auth/login"
 	"github.com/jordisalazar/money-management/auth/register"
+	"github.com/jordisalazar/money-management/debt"
+	"github.com/jordisalazar/money-management/debt/getdebts"
+	dprojections "github.com/jordisalazar/money-management/debt/projections"
+	"github.com/jordisalazar/money-management/debt/recorddebt"
 	_ "github.com/jordisalazar/money-management/docs"
 	"github.com/jordisalazar/money-management/pkg/logger"
 	"github.com/jordisalazar/money-management/shared/database"
@@ -84,19 +88,23 @@ func main() {
 	store.RegisterEvent(wallet.EventTypeMoneyDeposited, func() any { return &wallet.MoneyDeposited{} })
 	store.RegisterEvent(wallet.EventTypeMoneyWithdrawn, func() any { return &wallet.MoneyWithdrawn{} })
 	store.RegisterEvent(transaction.EventTypeTransactionCompleted, func() any { return &transaction.TransactionCompleted{} })
+	store.RegisterEvent(debt.EventTypeDebtRecorded, func() any { return &debt.DebtRecorded{} })
 
 	// Projection stores — Postgres-backed read models
 	walletStore := wprojections.NewPostgresWalletStore(pool)
 	movementStore := wprojections.NewPostgresMovementStore(pool)
 	transactionStore := txprojections.NewPostgresTransactionStore(pool)
+	debtStore := dprojections.NewPostgresDebtStore(pool)
 
 	// Projectors — subscribe to event store and write to projection stores
 	walletsProjector := wprojections.NewWalletsProjector(walletStore)
 	movementsProjector := wprojections.NewMovementsProjector(movementStore)
 	transactionsProjector := txprojections.NewTransactionsProjector(transactionStore)
+	debtsProjector := dprojections.NewDebtsProjector(debtStore)
 	store.Subscribe(walletsProjector)
 	store.Subscribe(movementsProjector)
 	store.Subscribe(transactionsProjector)
+	store.Subscribe(debtsProjector)
 
 	// Replay existing events to hydrate projections on startup
 	if err := store.ReplayAll(context.Background()); err != nil {
@@ -114,11 +122,13 @@ func main() {
 	depositmoney.RegisterCommands(r, store)
 	withdrawmoney.RegisterCommands(r, store)
 	transfermoney.RegisterCommands(r, store)
+	recorddebt.RegisterCommands(r, store)
 
 	// Register queries — pass stores, not projectors
 	getuserwallets.RegisterQueries(r, walletStore)
 	getwalletmovements.RegisterQueries(r, movementStore)
 	getusermovements.RegisterQueries(r, walletStore, movementStore)
+	getdebts.RegisterQueries(r, debtStore)
 
 	// Swagger UI
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))

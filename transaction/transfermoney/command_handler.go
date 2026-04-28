@@ -9,6 +9,7 @@ import (
 	"github.com/jordisalazar/money-management/shared/eventstore"
 	"github.com/jordisalazar/money-management/transaction"
 	"github.com/jordisalazar/money-management/wallet"
+	walletservices "github.com/jordisalazar/money-management/wallet/services"
 )
 
 type CommandHandler struct {
@@ -19,7 +20,7 @@ func NewCommandHandler(store eventstore.Store) *CommandHandler {
 	return &CommandHandler{store: store}
 }
 
-func (h *CommandHandler) Handle(ctx context.Context, cmd Command) (string, error) {
+func (h *CommandHandler) Handle(ctx context.Context, cmd walletservices.TransferMoneyCommand) (string, error) {
 	// Step 1: Validate command-level invariants
 	if cmd.Amount <= 0 {
 		return "", wallet.ErrInvalidAmount
@@ -46,10 +47,6 @@ func (h *CommandHandler) Handle(ctx context.Context, cmd Command) (string, error
 		}
 		fromAgg.Apply(raw)
 	}
-	if err := fromAgg.Withdraw(cmd.UserID, cmd.Amount, cmd.Currency, cmd.Reason, "Other", now); err != nil {
-		return "", err
-	}
-
 	// Step 3: Load destination wallet and deposit (in-memory only)
 	toEvents, err := h.store.Load(ctx, cmd.ToWalletID)
 	if err != nil {
@@ -63,7 +60,9 @@ func (h *CommandHandler) Handle(ctx context.Context, cmd Command) (string, error
 		}
 		toAgg.Apply(raw)
 	}
-	if err := toAgg.Deposit(cmd.UserID, cmd.Amount, cmd.Currency, cmd.Reason, now); err != nil {
+
+	err = walletservices.TransferMoney(fromAgg, toAgg, cmd)
+	if err != nil {
 		return "", err
 	}
 

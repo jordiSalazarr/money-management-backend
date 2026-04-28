@@ -1,0 +1,91 @@
+slice: recorddebt
+aggregate: debt
+aggregate_id: debt_id
+
+commands:
+  - name: RecordDebt
+    fields:
+      - name: debt_id
+        type: string
+        description: Server-generated UUID
+      - name: wallet_id
+        type: string
+        optional: true
+        description: "Optional — general debt if absent"
+      - name: owner_id
+        type: string
+        description: Hardcoded for now (no auth yet)
+      - name: amount
+        type: int
+        description: "Cents. Must be > 0 and <= 10000000"
+      - name: currency
+        type: string
+        description: "Enum: EUR, USD"
+      - name: direction
+        type: string
+        description: "Enum: IN, OUT"
+      - name: reason
+        type: string
+
+events:
+  - name: DebtRecorded
+    produced_by: RecordDebt
+    fields:
+      - name: debt_id
+        type: string
+      - name: wallet_id
+        type: string
+        description: "Empty string if not provided"
+      - name: owner_id
+        type: string
+      - name: amount
+        type: int
+      - name: currency
+        type: string
+      - name: direction
+        type: string
+      - name: reason
+        type: string
+      - name: created_at
+        type: time.Time
+
+invariants:
+  - description: "amount must be > 0 and <= 10000000"
+    enforced_by: RecordDebt
+    error: ErrInvalidAmount
+  - description: "currency must be EUR or USD"
+    enforced_by: RecordDebt
+    error: ErrInvalidCurrency
+  - description: "direction must be IN or OUT"
+    enforced_by: RecordDebt
+    error: ErrInvalidDirection
+  - description: "reason must not be empty"
+    enforced_by: RecordDebt
+    error: ErrMissingReason
+
+read_models:
+  - name: Debts
+    fed_by:
+      - DebtRecorded
+    fields:
+      - name: id
+        type: string
+        description: "= debt_id"
+      - name: owner_id
+        type: string
+      - name: wallet_id
+        type: "*string"
+        description: "Nullable — null if general debt"
+      - name: amount
+        type: int
+      - name: currency
+        type: string
+      - name: direction
+        type: string
+      - name: reason
+        type: string
+      - name: status
+        type: string
+        description: "Defaults to created"
+      - name: created_at
+        type: time.Time

@@ -8,6 +8,7 @@ import (
 	"github.com/jordisalazar/money-management/shared/eventstore"
 	"github.com/jordisalazar/money-management/shared/middleware"
 	"github.com/jordisalazar/money-management/wallet"
+	walletservices "github.com/jordisalazar/money-management/wallet/services"
 )
 
 type Handler struct {
@@ -63,7 +64,7 @@ func (h *Handler) TransferMoney(c *gin.Context) {
 		return
 	}
 
-	cmd := Command{
+	cmd := walletservices.TransferMoneyCommand{
 		UserID:       middleware.GetUserID(c.Request.Context()),
 		FromWalletID: req.FromWalletID,
 		ToWalletID:   req.ToWalletID,
