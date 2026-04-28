@@ -1,22 +1,24 @@
 package getwalletmovements
 
 import (
+	"log/slog"
 	"net/http"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jordisalazar/money-management/wallet/projections"
 )
 
 type Handler struct {
-	projector *MovementsProjector
+	store projections.MovementStore
 }
 
-func NewHandler(projector *MovementsProjector) *Handler {
-	return &Handler{projector: projector}
+func NewHandler(store projections.MovementStore) *Handler {
+	return &Handler{store: store}
 }
 
 // Response contains the list of movements for a wallet.
 type Response struct {
-	Movements []MovementView `json:"movements"`
+	Movements []projections.MovementView `json:"movements"`
 }
 
 // GetWalletMovements returns all movements for a given wallet.
@@ -32,9 +34,14 @@ type Response struct {
 func (h *Handler) GetWalletMovements(c *gin.Context) {
 	walletID := c.Param("id")
 
-	movements := h.projector.ListByWalletID(walletID)
+	movements, err := h.store.ListByWalletID(c.Request.Context(), walletID)
+	if err != nil {
+		slog.Error("failed to list movements", "wallet_id", walletID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error_code": "internal_error", "message": "failed to list movements"})
+		return
+	}
 	if movements == nil {
-		movements = []MovementView{}
+		movements = []projections.MovementView{}
 	}
 
 	c.JSON(http.StatusOK, Response{Movements: movements})

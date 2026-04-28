@@ -1,7 +1,8 @@
-package getwalletmovements
+package projections
 
 import (
-	"sync"
+	"context"
+	"log/slog"
 	"time"
 
 	"github.com/google/uuid"
@@ -21,24 +22,25 @@ type MovementView struct {
 	OccurredAt time.Time `json:"occurred_at" example:"2026-04-26T12:30:00Z"`
 }
 
-type MovementsProjector struct {
-	mu        sync.RWMutex
-	movements map[string][]MovementView // keyed by wallet_id
+type MovementStore interface {
+	Insert(ctx context.Context, view *MovementView) error
+	ListByWalletID(ctx context.Context, walletID string) ([]MovementView, error)
 }
 
-func NewMovementsProjector() *MovementsProjector {
-	return &MovementsProjector{
-		movements: make(map[string][]MovementView),
-	}
+type MovementsProjector struct {
+	store MovementStore
+}
+
+func NewMovementsProjector(store MovementStore) *MovementsProjector {
+	return &MovementsProjector{store: store}
 }
 
 func (p *MovementsProjector) Handle(event any) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	ctx := context.Background()
 
 	switch e := event.(type) {
 	case wallet.MoneyDeposited:
-		p.movements[e.WalletID] = append(p.movements[e.WalletID], MovementView{
+		view := &MovementView{
 			ID:         uuid.New().String(),
 			WalletID:   e.WalletID,
 			Type:       "deposit",
@@ -47,9 +49,13 @@ func (p *MovementsProjector) Handle(event any) {
 			Reason:     e.Reason,
 			Category:   "",
 			OccurredAt: e.DepositedAt,
-		})
+		}
+		if err := p.store.Insert(ctx, view); err != nil {
+			slog.Error("movements projector: insert failed", "wallet_id", e.WalletID, "error", err)
+		}
+
 	case wallet.MoneyWithdrawn:
-		p.movements[e.WalletID] = append(p.movements[e.WalletID], MovementView{
+		view := &MovementView{
 			ID:         uuid.New().String(),
 			WalletID:   e.WalletID,
 			Type:       "withdrawal",
@@ -58,9 +64,13 @@ func (p *MovementsProjector) Handle(event any) {
 			Reason:     e.Reason,
 			Category:   e.Category,
 			OccurredAt: e.WithdrawnAt,
-		})
+		}
+		if err := p.store.Insert(ctx, view); err != nil {
+			slog.Error("movements projector: insert failed", "wallet_id", e.WalletID, "error", err)
+		}
+
 	case transaction.TransactionCompleted:
-		p.movements[e.FromWalletID] = append(p.movements[e.FromWalletID], MovementView{
+		out := &MovementView{
 			ID:         uuid.New().String(),
 			WalletID:   e.FromWalletID,
 			Type:       "transfer_out",
@@ -69,8 +79,12 @@ func (p *MovementsProjector) Handle(event any) {
 			Reason:     e.Reason,
 			Category:   "",
 			OccurredAt: e.CompletedAt,
-		})
-		p.movements[e.ToWalletID] = append(p.movements[e.ToWalletID], MovementView{
+		}
+		if err := p.store.Insert(ctx, out); err != nil {
+			slog.Error("movements projector: insert failed", "wallet_id", e.FromWalletID, "error", err)
+		}
+
+		in := &MovementView{
 			ID:         uuid.New().String(),
 			WalletID:   e.ToWalletID,
 			Type:       "transfer_in",
@@ -79,20 +93,9 @@ func (p *MovementsProjector) Handle(event any) {
 			Reason:     e.Reason,
 			Category:   "",
 			OccurredAt: e.CompletedAt,
-		})
+		}
+		if err := p.store.Insert(ctx, in); err != nil {
+			slog.Error("movements projector: insert failed", "wallet_id", e.ToWalletID, "error", err)
+		}
 	}
-}
-
-func (p *MovementsProjector) ListByWalletID(walletID string) []MovementView {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	movements := p.movements[walletID]
-	if movements == nil {
-		return nil
-	}
-
-	result := make([]MovementView, len(movements))
-	copy(result, movements)
-	return result
 }

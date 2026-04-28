@@ -1,9 +1,12 @@
 package getwalletmovements
 
-import "github.com/gin-gonic/gin"
+import (
+	"github.com/gin-gonic/gin"
+	"github.com/jordisalazar/money-management/wallet/projections"
+)
 
-func RegisterQueries(router *gin.Engine, projector *MovementsProjector) {
-	handler := NewHandler(projector)
+func RegisterQueries(router *gin.Engine, store projections.MovementStore) {
+	handler := NewHandler(store)
 
 	router.GET("/wallets/:id/movements", handler.GetWalletMovements)
 }

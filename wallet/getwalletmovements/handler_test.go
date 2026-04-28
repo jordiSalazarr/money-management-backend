@@ -12,9 +12,10 @@ import (
 	"github.com/jordisalazar/money-management/transaction"
 	"github.com/jordisalazar/money-management/wallet"
 	"github.com/jordisalazar/money-management/wallet/getwalletmovements"
+	"github.com/jordisalazar/money-management/wallet/projections"
 )
 
-func setupRouter() (*gin.Engine, *getwalletmovements.MovementsProjector) {
+func setupRouter() (*gin.Engine, *projections.MovementsProjector) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -23,8 +24,9 @@ func setupRouter() (*gin.Engine, *getwalletmovements.MovementsProjector) {
 		)
 		c.Next()
 	})
-	projector := getwalletmovements.NewMovementsProjector()
-	getwalletmovements.RegisterQueries(r, projector)
+	store := projections.NewMemoryMovementStore()
+	projector := projections.NewMovementsProjector(store)
+	getwalletmovements.RegisterQueries(r, store)
 	return r, projector
 }
 

@@ -1,10 +1,10 @@
-package addwallet
+package projections
 
 import (
-	"sync"
+	"context"
+	"log/slog"
 	"time"
 
-	"github.com/jordisalazar/money-management/transaction"
 	"github.com/jordisalazar/money-management/wallet"
 )
 
@@ -21,24 +21,31 @@ type WalletView struct {
 	LastMovementAt *time.Time `json:"last_movement_at" example:"2026-04-26T12:30:00Z"`
 }
 
-type WalletsProjector struct {
-	mu      sync.RWMutex
-	wallets map[string]*WalletView
+type WalletStore interface {
+	Upsert(ctx context.Context, view *WalletView) error
+	ListByUserID(ctx context.Context, userID string) ([]WalletView, error)
 }
 
-func NewWalletsProjector() *WalletsProjector {
+type WalletsProjector struct {
+	store WalletStore
+	// cache keeps an in-memory copy so Handle can do read-modify-write
+	// without a DB round-trip on every event.
+	cache map[string]*WalletView
+}
+
+func NewWalletsProjector(store WalletStore) *WalletsProjector {
 	return &WalletsProjector{
-		wallets: make(map[string]*WalletView),
+		store: store,
+		cache: make(map[string]*WalletView),
 	}
 }
 
 func (p *WalletsProjector) Handle(event any) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	ctx := context.Background()
 
 	switch e := event.(type) {
 	case wallet.WalletAdded:
-		p.wallets[e.WalletID] = &WalletView{
+		view := &WalletView{
 			ID:             e.WalletID,
 			UserID:         e.UserID,
 			Name:           e.Name,
@@ -48,54 +55,31 @@ func (p *WalletsProjector) Handle(event any) {
 			Category:       e.Category,
 			CreatedAt:      e.CreatedAt,
 		}
+		p.cache[e.WalletID] = view
+		if err := p.store.Upsert(ctx, view); err != nil {
+			slog.Error("wallets projector: upsert failed", "wallet_id", e.WalletID, "error", err)
+		}
+
 	case wallet.MoneyDeposited:
-		w, ok := p.wallets[e.WalletID]
+		w, ok := p.cache[e.WalletID]
 		if !ok {
 			return
 		}
 		w.CurrentBalance += e.Amount
 		w.LastMovementAt = &e.DepositedAt
+		if err := p.store.Upsert(ctx, w); err != nil {
+			slog.Error("wallets projector: upsert failed", "wallet_id", e.WalletID, "error", err)
+		}
+
 	case wallet.MoneyWithdrawn:
-		w, ok := p.wallets[e.WalletID]
+		w, ok := p.cache[e.WalletID]
 		if !ok {
 			return
 		}
 		w.CurrentBalance -= e.Amount
 		w.LastMovementAt = &e.WithdrawnAt
-	case transaction.TransactionCompleted:
-		if from, ok := p.wallets[e.FromWalletID]; ok {
-			from.CurrentBalance -= e.Amount
-			from.LastMovementAt = &e.CompletedAt
-		}
-		if to, ok := p.wallets[e.ToWalletID]; ok {
-			to.CurrentBalance += e.Amount
-			to.LastMovementAt = &e.CompletedAt
+		if err := p.store.Upsert(ctx, w); err != nil {
+			slog.Error("wallets projector: upsert failed", "wallet_id", e.WalletID, "error", err)
 		}
 	}
-}
-
-func (p *WalletsProjector) CountByUserID(userID string) int {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	count := 0
-	for _, w := range p.wallets {
-		if w.UserID == userID {
-			count++
-		}
-	}
-	return count
-}
-
-func (p *WalletsProjector) ListByUserID(userID string) []WalletView {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	var result []WalletView
-	for _, w := range p.wallets {
-		if w.UserID == userID {
-			result = append(result, *w)
-		}
-	}
-	return result
 }

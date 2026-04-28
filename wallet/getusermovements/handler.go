@@ -1,14 +1,14 @@
 package getusermovements
 
 import (
+	"log/slog"
 	"net/http"
 	"sort"
 	"time"
 
 	"github.com/gin-gonic/gin"
 	"github.com/jordisalazar/money-management/shared/middleware"
-	"github.com/jordisalazar/money-management/wallet/addwallet"
-	"github.com/jordisalazar/money-management/wallet/getwalletmovements"
+	"github.com/jordisalazar/money-management/wallet/projections"
 )
 
 // UserMovementView is the enriched read model for a movement across all user wallets.
@@ -25,14 +25,14 @@ type UserMovementView struct {
 }
 
 type Handler struct {
-	walletsProjector   *addwallet.WalletsProjector
-	movementsProjector *getwalletmovements.MovementsProjector
+	walletStore   projections.WalletStore
+	movementStore projections.MovementStore
 }
 
-func NewHandler(walletsProjector *addwallet.WalletsProjector, movementsProjector *getwalletmovements.MovementsProjector) *Handler {
+func NewHandler(walletStore projections.WalletStore, movementStore projections.MovementStore) *Handler {
 	return &Handler{
-		walletsProjector:   walletsProjector,
-		movementsProjector: movementsProjector,
+		walletStore:   walletStore,
+		movementStore: movementStore,
 	}
 }
 
@@ -51,9 +51,15 @@ type Response struct {
 // @Security     BearerAuth
 // @Router       /movements [get]
 func (h *Handler) GetUserMovements(c *gin.Context) {
-	userID := middleware.GetUserID(c.Request.Context())
+	ctx := c.Request.Context()
+	userID := middleware.GetUserID(ctx)
 
-	wallets := h.walletsProjector.ListByUserID(userID)
+	wallets, err := h.walletStore.ListByUserID(ctx, userID)
+	if err != nil {
+		slog.Error("failed to list wallets", "user_id", userID, "error", err)
+		c.JSON(http.StatusInternalServerError, gin.H{"error_code": "internal_error", "message": "failed to list movements"})
+		return
+	}
 
 	walletNames := make(map[string]string, len(wallets))
 	for _, w := range wallets {
@@ -62,7 +68,12 @@ func (h *Handler) GetUserMovements(c *gin.Context) {
 
 	var all []UserMovementView
 	for _, w := range wallets {
-		movements := h.movementsProjector.ListByWalletID(w.ID)
+		movements, err := h.movementStore.ListByWalletID(ctx, w.ID)
+		if err != nil {
+			slog.Error("failed to list movements", "wallet_id", w.ID, "error", err)
+			c.JSON(http.StatusInternalServerError, gin.H{"error_code": "internal_error", "message": "failed to list movements"})
+			return
+		}
 		for _, m := range movements {
 			all = append(all, UserMovementView{
 				ID:         m.ID,

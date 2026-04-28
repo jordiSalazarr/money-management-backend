@@ -1,7 +1,8 @@
-package transfermoney
+package projections
 
 import (
-	"sync"
+	"context"
+	"log/slog"
 	"time"
 
 	"github.com/jordisalazar/money-management/transaction"
@@ -20,24 +21,26 @@ type TransactionView struct {
 	CompletedAt   *time.Time `json:"completed_at"`
 }
 
-type TransactionsProjector struct {
-	mu           sync.RWMutex
-	transactions map[string]*TransactionView
+type TransactionStore interface {
+	Insert(ctx context.Context, view *TransactionView) error
+	UpdateStatus(ctx context.Context, transactionID string, status string, completedAt *time.Time) error
+	ListByUserID(ctx context.Context, userID string) ([]TransactionView, error)
 }
 
-func NewTransactionsProjector() *TransactionsProjector {
-	return &TransactionsProjector{
-		transactions: make(map[string]*TransactionView),
-	}
+type TransactionsProjector struct {
+	store TransactionStore
+}
+
+func NewTransactionsProjector(store TransactionStore) *TransactionsProjector {
+	return &TransactionsProjector{store: store}
 }
 
 func (p *TransactionsProjector) Handle(event any) {
-	p.mu.Lock()
-	defer p.mu.Unlock()
+	ctx := context.Background()
 
 	switch e := event.(type) {
 	case transaction.TransactionCreated:
-		p.transactions[e.TransactionID] = &TransactionView{
+		view := &TransactionView{
 			TransactionID: e.TransactionID,
 			UserID:        e.UserID,
 			FromWalletID:  e.FromWalletID,
@@ -48,25 +51,13 @@ func (p *TransactionsProjector) Handle(event any) {
 			Status:        "CREATED",
 			CreatedAt:     e.CreatedAt,
 		}
+		if err := p.store.Insert(ctx, view); err != nil {
+			slog.Error("transactions projector: insert failed", "transaction_id", e.TransactionID, "error", err)
+		}
+
 	case transaction.TransactionCompleted:
-		txn, ok := p.transactions[e.TransactionID]
-		if !ok {
-			return
-		}
-		txn.Status = "COMPLETED"
-		txn.CompletedAt = &e.CompletedAt
-	}
-}
-
-func (p *TransactionsProjector) ListByUserID(userID string) []TransactionView {
-	p.mu.RLock()
-	defer p.mu.RUnlock()
-
-	var result []TransactionView
-	for _, txn := range p.transactions {
-		if txn.UserID == userID {
-			result = append(result, *txn)
+		if err := p.store.UpdateStatus(ctx, e.TransactionID, "COMPLETED", &e.CompletedAt); err != nil {
+			slog.Error("transactions projector: update status failed", "transaction_id", e.TransactionID, "error", err)
 		}
 	}
-	return result
 }

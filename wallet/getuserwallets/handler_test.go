@@ -8,11 +8,11 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jordisalazar/money-management/shared/middleware"
-	"github.com/jordisalazar/money-management/wallet/addwallet"
 	"github.com/jordisalazar/money-management/wallet/getuserwallets"
+	"github.com/jordisalazar/money-management/wallet/projections"
 )
 
-func setupRouter() (*gin.Engine, *addwallet.WalletsProjector) {
+func setupRouter() (*gin.Engine, *projections.WalletsProjector) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -21,8 +21,9 @@ func setupRouter() (*gin.Engine, *addwallet.WalletsProjector) {
 		)
 		c.Next()
 	})
-	projector := addwallet.NewWalletsProjector()
-	getuserwallets.RegisterQueries(r, projector)
+	store := projections.NewMemoryWalletStore()
+	projector := projections.NewWalletsProjector(store)
+	getuserwallets.RegisterQueries(r, store)
 	return r, projector
 }
 
