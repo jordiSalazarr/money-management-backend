@@ -42,7 +42,7 @@ func (h *Handler) GetDebts(c *gin.Context) {
 	}
 
 	if walletID := c.Query("wallet_id"); walletID != "" {
-		filter.WalletID = &walletID
+		filter.WalletID = walletID
 	}
 	if direction := c.Query("direction"); direction != "" {
 		filter.Direction = &direction

@@ -9,6 +9,13 @@ type DomainEvent interface {
 	EventType() string
 }
 
+type DebtStatus string
+
+const (
+	DebtStatusCreated DebtStatus = "created"
+	DebtStatusSettled DebtStatus = "settled"
+)
+
 type Aggregate struct {
 	id        string
 	ownerID   string
@@ -17,6 +24,7 @@ type Aggregate struct {
 	currency  string
 	direction string
 	reason    string
+	status    DebtStatus
 	createdAt time.Time
 	version   int
 	changes   []DomainEvent
@@ -29,6 +37,9 @@ func NewAggregate() *Aggregate {
 func Create(debtID, ownerID, walletID string, amount int, currency, direction, reason string, now time.Time) (*Aggregate, error) {
 	if ownerID == "" {
 		return nil, ErrMissingOwnerID
+	}
+	if walletID == "" {
+		return nil, ErrMissingWalletID
 	}
 	if amount <= 0 || amount > 10_000_000 {
 		return nil, ErrInvalidAmount
@@ -58,14 +69,30 @@ func Create(debtID, ownerID, walletID string, amount int, currency, direction, r
 }
 
 func (a *Aggregate) ID() string             { return a.id }
-func (a *Aggregate) Version() int            { return a.version }
-func (a *Aggregate) OwnerID() string         { return a.ownerID }
-func (a *Aggregate) WalletID() string        { return a.walletID }
-func (a *Aggregate) Amount() int             { return a.amount }
-func (a *Aggregate) Currency() string        { return a.currency }
-func (a *Aggregate) Direction() string       { return a.direction }
-func (a *Aggregate) Reason() string          { return a.reason }
-func (a *Aggregate) Changes() []DomainEvent  { return a.changes }
+func (a *Aggregate) Version() int           { return a.version }
+func (a *Aggregate) OwnerID() string        { return a.ownerID }
+func (a *Aggregate) WalletID() string       { return a.walletID }
+func (a *Aggregate) Amount() int            { return a.amount }
+func (a *Aggregate) Currency() string       { return a.currency }
+func (a *Aggregate) Direction() string      { return a.direction }
+func (a *Aggregate) Reason() string         { return a.reason }
+func (a *Aggregate) Status() DebtStatus     { return a.status }
+func (a *Aggregate) Changes() []DomainEvent { return a.changes }
+
+func (a *Aggregate) Settle(settledBy string, now time.Time) error {
+	if settledBy == "" {
+		return ErrMissingSettledBy
+	}
+	if a.status == DebtStatusSettled {
+		return ErrDebtAlreadySettled
+	}
+	a.raise(DebtSettled{
+		DebtID:    a.id,
+		SettledBy: settledBy,
+		SettledAt: now,
+	})
+	return nil
+}
 
 func (a *Aggregate) raise(event DomainEvent) {
 	a.Apply(event)
@@ -82,7 +109,10 @@ func (a *Aggregate) Apply(event any) {
 		a.currency = e.Currency
 		a.direction = e.Direction
 		a.reason = e.Reason
+		a.status = DebtStatusCreated
 		a.createdAt = e.CreatedAt
+	case DebtSettled:
+		a.status = DebtStatusSettled
 	}
 	a.version++
 }

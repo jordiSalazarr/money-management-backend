@@ -2,7 +2,7 @@
 CREATE TABLE debts_view (
     id         UUID        PRIMARY KEY,
     owner_id   UUID        NOT NULL,
-    wallet_id  UUID,
+    wallet_id  UUID        NOT NULL,
     amount     INTEGER     NOT NULL,
     currency   TEXT        NOT NULL,
     direction  TEXT        NOT NULL,

@@ -82,6 +82,53 @@ func (s *PostgresStore) Append(ctx context.Context, aggregateID string, events [
 	return nil
 }
 
+func (s *PostgresStore) AppendWithOutbox(ctx context.Context, aggregateID string, events []Event, expectedVersion int, outbox []OutboxEntry) error {
+	tx, err := s.pool.Begin(ctx)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer tx.Rollback(ctx)
+
+	currentVersion, err := s.currentVersion(ctx, tx, aggregateID)
+	if err != nil {
+		return err
+	}
+	if currentVersion != expectedVersion {
+		return ErrConcurrencyConflict
+	}
+
+	for i := range events {
+		events[i].Version = currentVersion + i + 1
+		if err := s.insertEvent(ctx, tx, events[i]); err != nil {
+			return err
+		}
+	}
+
+	for _, entry := range outbox {
+		if err := s.insertOutboxEntry(ctx, tx, entry); err != nil {
+			return err
+		}
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return fmt.Errorf("committing transaction: %w", err)
+	}
+
+	s.notify(events)
+	return nil
+}
+
+func (s *PostgresStore) insertOutboxEntry(ctx context.Context, tx pgx.Tx, entry OutboxEntry) error {
+	_, err := tx.Exec(ctx,
+		`INSERT INTO outbox (id, event_type, payload, created_at)
+		 VALUES ($1, $2, $3, $4)`,
+		entry.ID, entry.EventType, entry.Payload, entry.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("inserting outbox entry: %w", err)
+	}
+	return nil
+}
+
 func (s *PostgresStore) AppendMulti(ctx context.Context, batches []AggregateEvents) error {
 	tx, err := s.pool.Begin(ctx)
 	if err != nil {

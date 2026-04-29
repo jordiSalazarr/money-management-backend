@@ -35,9 +35,9 @@ func (s *PostgresDebtStore) List(ctx context.Context, filter DebtFilter) ([]Debt
 	args := []any{filter.OwnerID}
 	argIdx := 2
 
-	if filter.WalletID != nil {
+	if filter.WalletID != "" {
 		query += fmt.Sprintf(" AND wallet_id = $%d", argIdx)
-		args = append(args, *filter.WalletID)
+		args = append(args, filter.WalletID)
 		argIdx++
 	}
 	if filter.Direction != nil {

@@ -52,15 +52,13 @@ func TestGetDebts_Empty(t *testing.T) {
 func TestGetDebts_WithData(t *testing.T) {
 	router, store := setupRouter()
 	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
-	walletID := "wallet-1"
-
 	_ = store.Upsert(context.Background(), &projections.DebtView{
-		ID: "debt-1", OwnerID: "user-1", WalletID: &walletID,
+		ID: "debt-1", OwnerID: "user-1", WalletID: "wallet-1",
 		Amount: 1000, Currency: "EUR", Direction: "IN",
 		Reason: "Dinner", Status: "created", CreatedAt: now,
 	})
 	_ = store.Upsert(context.Background(), &projections.DebtView{
-		ID: "debt-2", OwnerID: "user-1", WalletID: nil,
+		ID: "debt-2", OwnerID: "user-1", WalletID: "wallet-2",
 		Amount: 5000, Currency: "USD", Direction: "OUT",
 		Reason: "Tickets", Status: "created", CreatedAt: now,
 	})

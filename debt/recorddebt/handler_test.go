@@ -58,28 +58,6 @@ func TestRecordDebt_Success(t *testing.T) {
 	}
 }
 
-func TestRecordDebt_SuccessWithoutWallet(t *testing.T) {
-	router := setupRouter()
-
-	body := map[string]any{
-		"amount":    5000,
-		"currency":  "USD",
-		"direction": "OUT",
-		"reason":    "Concert tickets",
-	}
-	jsonBody, _ := json.Marshal(body)
-
-	req := httptest.NewRequest(http.MethodPost, "/debts", bytes.NewReader(jsonBody))
-	req.Header.Set("Content-Type", "application/json")
-	w := httptest.NewRecorder()
-
-	router.ServeHTTP(w, req)
-
-	if w.Code != http.StatusCreated {
-		t.Fatalf("status = %d, want %d; body = %s", w.Code, http.StatusCreated, w.Body.String())
-	}
-}
-
 func TestRecordDebt_ValidationErrors(t *testing.T) {
 	router := setupRouter()
 
@@ -90,38 +68,44 @@ func TestRecordDebt_ValidationErrors(t *testing.T) {
 		wantCode   string
 	}{
 		{
+			name:       "missing wallet_id",
+			body:       map[string]any{"amount": 1000, "currency": "EUR", "direction": "IN", "reason": "test"},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "missing_wallet_id",
+		},
+		{
 			name:       "zero amount",
-			body:       map[string]any{"amount": 0, "currency": "EUR", "direction": "IN", "reason": "test"},
+			body:       map[string]any{"wallet_id": "w-1", "amount": 0, "currency": "EUR", "direction": "IN", "reason": "test"},
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "invalid_amount",
 		},
 		{
 			name:       "negative amount",
-			body:       map[string]any{"amount": -1, "currency": "EUR", "direction": "IN", "reason": "test"},
+			body:       map[string]any{"wallet_id": "w-1", "amount": -1, "currency": "EUR", "direction": "IN", "reason": "test"},
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "invalid_amount",
 		},
 		{
 			name:       "amount too high",
-			body:       map[string]any{"amount": 10_000_001, "currency": "EUR", "direction": "IN", "reason": "test"},
+			body:       map[string]any{"wallet_id": "w-1", "amount": 10_000_001, "currency": "EUR", "direction": "IN", "reason": "test"},
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "invalid_amount",
 		},
 		{
 			name:       "invalid currency",
-			body:       map[string]any{"amount": 1000, "currency": "GBP", "direction": "IN", "reason": "test"},
+			body:       map[string]any{"wallet_id": "w-1", "amount": 1000, "currency": "GBP", "direction": "IN", "reason": "test"},
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "invalid_currency",
 		},
 		{
 			name:       "invalid direction",
-			body:       map[string]any{"amount": 1000, "currency": "EUR", "direction": "BOTH", "reason": "test"},
+			body:       map[string]any{"wallet_id": "w-1", "amount": 1000, "currency": "EUR", "direction": "BOTH", "reason": "test"},
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "invalid_direction",
 		},
 		{
 			name:       "missing reason",
-			body:       map[string]any{"amount": 1000, "currency": "EUR", "direction": "IN", "reason": ""},
+			body:       map[string]any{"wallet_id": "w-1", "amount": 1000, "currency": "EUR", "direction": "IN", "reason": ""},
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "missing_reason",
 		},

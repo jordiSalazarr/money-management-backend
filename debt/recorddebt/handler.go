@@ -91,6 +91,8 @@ func mapError(err error) (int, ErrorResponse) {
 		return http.StatusBadRequest, ErrorResponse{ErrorCode: "invalid_direction", Message: err.Error()}
 	case errors.Is(err, debt.ErrMissingReason):
 		return http.StatusBadRequest, ErrorResponse{ErrorCode: "missing_reason", Message: err.Error()}
+	case errors.Is(err, debt.ErrMissingWalletID):
+		return http.StatusBadRequest, ErrorResponse{ErrorCode: "missing_wallet_id", Message: err.Error()}
 	default:
 		return http.StatusInternalServerError, ErrorResponse{ErrorCode: "internal_error", Message: "internal server error"}
 	}

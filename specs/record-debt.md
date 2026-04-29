@@ -11,7 +11,7 @@
 | Field     | Type   | Required | Notes                          |
 |-----------|--------|----------|--------------------------------|
 | debt_id   | UUID   | yes      | Server-generated               |
-| wallet_id | UUID   | no       | Optional — general debt if absent |
+| wallet_id | UUID   | yes      | Target wallet for settlement     |
 | owner_id  | UUID   | yes      | Hardcoded for now (no auth yet) |
 | amount    | Int    | yes      | Cents. Must be > 0 and <= 10_000_000 |
 | currency  | String | yes      | Enum: `EUR`, `USD`             |
@@ -30,7 +30,7 @@
 | Field      | Type     | Notes                          |
 |------------|----------|--------------------------------|
 | debt_id    | UUID     | Aggregate ID                   |
-| wallet_id  | UUID     | Empty string if not provided   |
+| wallet_id  | UUID     | Required                       |
 | owner_id   | UUID     |                                |
 | amount     | Int      | Cents                          |
 | currency   | String   |                                |
@@ -46,7 +46,7 @@ Read model built from `DebtRecorded` events.
 |------------|----------|--------------------------------|
 | id         | UUID     | = debt_id                      |
 | owner_id   | UUID     |                                |
-| wallet_id  | UUID     | Nullable — null if general debt |
+| wallet_id  | UUID     | Required                       |
 | amount     | Int      | Cents                          |
 | currency   | String   |                                |
 | direction  | String   | `IN` or `OUT`                  |
@@ -82,7 +82,7 @@ Read model built from `DebtRecorded` events.
 ```
 
 - **Errors:**
-  - `400` — `invalid_amount`, `invalid_currency`, `invalid_direction`, `missing_reason`, `missing_owner_id`
+  - `400` — `invalid_amount`, `invalid_currency`, `invalid_direction`, `missing_reason`, `missing_owner_id`, `missing_wallet_id`
 
 ### List debts
 
@@ -125,3 +125,4 @@ Read model built from `DebtRecorded` events.
 | invalid_direction| 400  | direction must be IN or OUT                   |
 | missing_reason   | 400  | reason is required                            |
 | missing_owner_id | 400  | owner_id is required                          |
+| missing_wallet_id| 400  | wallet_id is required                         |

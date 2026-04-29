@@ -34,7 +34,7 @@ func (s *MemoryDebtStore) List(_ context.Context, filter DebtFilter) ([]DebtView
 		if d.OwnerID != filter.OwnerID {
 			continue
 		}
-		if filter.WalletID != nil && (d.WalletID == nil || *d.WalletID != *filter.WalletID) {
+		if filter.WalletID != "" && d.WalletID != filter.WalletID {
 			continue
 		}
 		if filter.Direction != nil && d.Direction != *filter.Direction {

@@ -4,6 +4,7 @@ import "time"
 
 const (
 	EventTypeDebtRecorded = "DebtRecorded"
+	EventTypeDebtSettled  = "DebtSettled"
 )
 
 type DebtRecorded struct {
@@ -18,3 +19,11 @@ type DebtRecorded struct {
 }
 
 func (e DebtRecorded) EventType() string { return EventTypeDebtRecorded }
+
+type DebtSettled struct {
+	DebtID    string    `json:"debt_id"`
+	SettledBy string    `json:"settled_by"`
+	SettledAt time.Time `json:"settled_at"`
+}
+
+func (e DebtSettled) EventType() string { return EventTypeDebtSettled }

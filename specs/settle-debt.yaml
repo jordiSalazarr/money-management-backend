@@ -1,0 +1,65 @@
+slice: SettleDebt
+
+aggregate:
+  name: Debt
+  type: debt
+  existing: true
+
+commands:
+  - name: SettleDebt
+    fields:
+      - name: debt_id
+        type: string
+        description: From URL path
+      - name: settled_by
+        type: string
+        description: User settling the debt
+
+events:
+  - name: DebtSettled
+    produced_by: SettleDebt
+    fields:
+      - name: debt_id
+        type: string
+      - name: settled_by
+        type: string
+      - name: settled_at
+        type: time.Time
+
+invariants:
+  - description: Debt must exist (aggregate must have events)
+    enforced_by: SettleDebt
+    error: ErrDebtNotFound
+  - description: Debt must not already be settled (status must be created)
+    enforced_by: SettleDebt
+    error: ErrDebtAlreadySettled
+
+read_models:
+  - name: Debts
+    existing: true
+    fed_by:
+      - DebtSettled
+    fields:
+      - name: status
+        type: string
+
+outbox:
+  triggered_by: DebtSettled
+  payload_fields:
+    - name: debt_id
+      type: string
+    - name: wallet_id
+      type: string
+    - name: amount
+      type: int
+    - name: currency
+      type: string
+    - name: direction
+      type: string
+    - name: settled_by
+      type: string
+  reactions:
+    - condition: direction = IN
+      dispatches: DepositMoney
+    - condition: direction = OUT
+      dispatches: WithdrawMoney

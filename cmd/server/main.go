@@ -13,6 +13,7 @@ import (
 	"context"
 	"log/slog"
 	"os"
+	"time"
 
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
@@ -25,6 +26,7 @@ import (
 	"github.com/jordisalazar/money-management/debt/getdebts"
 	dprojections "github.com/jordisalazar/money-management/debt/projections"
 	"github.com/jordisalazar/money-management/debt/recorddebt"
+	"github.com/jordisalazar/money-management/debt/settledebt"
 	_ "github.com/jordisalazar/money-management/docs"
 	"github.com/jordisalazar/money-management/pkg/logger"
 	"github.com/jordisalazar/money-management/shared/database"
@@ -41,6 +43,8 @@ import (
 	"github.com/jordisalazar/money-management/wallet/getwalletmovements"
 	wprojections "github.com/jordisalazar/money-management/wallet/projections"
 	"github.com/jordisalazar/money-management/wallet/withdrawmoney"
+
+	"github.com/jordisalazar/money-management/shared/outbox"
 )
 
 func main() {
@@ -89,6 +93,7 @@ func main() {
 	store.RegisterEvent(wallet.EventTypeMoneyWithdrawn, func() any { return &wallet.MoneyWithdrawn{} })
 	store.RegisterEvent(transaction.EventTypeTransactionCompleted, func() any { return &transaction.TransactionCompleted{} })
 	store.RegisterEvent(debt.EventTypeDebtRecorded, func() any { return &debt.DebtRecorded{} })
+	store.RegisterEvent(debt.EventTypeDebtSettled, func() any { return &debt.DebtSettled{} })
 
 	// Projection stores — Postgres-backed read models
 	walletStore := wprojections.NewPostgresWalletStore(pool)
@@ -123,12 +128,19 @@ func main() {
 	withdrawmoney.RegisterCommands(r, store)
 	transfermoney.RegisterCommands(r, store)
 	recorddebt.RegisterCommands(r, store)
+	settledebt.RegisterCommands(r, store)
 
 	// Register queries — pass stores, not projectors
 	getuserwallets.RegisterQueries(r, walletStore)
 	getwalletmovements.RegisterQueries(r, movementStore)
 	getusermovements.RegisterQueries(r, walletStore, movementStore)
 	getdebts.RegisterQueries(r, debtStore)
+
+	// Outbox poller — processes DebtSettled events and dispatches wallet commands
+	reactorHandler := settledebt.NewReactorHandler(store)
+	poller := outbox.NewPoller(pool, reactorHandler, 2*time.Second)
+	go poller.Start(context.Background())
+	log.Info("outbox poller started", "interval", "2s")
 
 	// Swagger UI
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))

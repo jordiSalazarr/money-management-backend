@@ -47,16 +47,6 @@ func TestCreate(t *testing.T) {
 		}
 	})
 
-	t.Run("creates debt without wallet (general debt)", func(t *testing.T) {
-		agg, err := debt.Create("debt-2", "user-1", "", 5000, "USD", "OUT", "Concert tickets", now)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if agg.WalletID() != "" {
-			t.Errorf("WalletID = %q, want empty", agg.WalletID())
-		}
-	})
-
 	tests := []struct {
 		name      string
 		debtID    string
@@ -70,37 +60,42 @@ func TestCreate(t *testing.T) {
 	}{
 		{
 			name: "missing owner_id",
-			debtID: "d-1", ownerID: "", walletID: "", amount: 1000, currency: "EUR", direction: "IN", reason: "test",
+			debtID: "d-1", ownerID: "", walletID: "w-1", amount: 1000, currency: "EUR", direction: "IN", reason: "test",
 			wantErr: debt.ErrMissingOwnerID,
 		},
 		{
+			name: "missing wallet_id",
+			debtID: "d-1", ownerID: "u-1", walletID: "", amount: 1000, currency: "EUR", direction: "IN", reason: "test",
+			wantErr: debt.ErrMissingWalletID,
+		},
+		{
 			name: "zero amount",
-			debtID: "d-1", ownerID: "u-1", walletID: "", amount: 0, currency: "EUR", direction: "IN", reason: "test",
+			debtID: "d-1", ownerID: "u-1", walletID: "w-1", amount: 0, currency: "EUR", direction: "IN", reason: "test",
 			wantErr: debt.ErrInvalidAmount,
 		},
 		{
 			name: "negative amount",
-			debtID: "d-1", ownerID: "u-1", walletID: "", amount: -100, currency: "EUR", direction: "IN", reason: "test",
+			debtID: "d-1", ownerID: "u-1", walletID: "w-1", amount: -100, currency: "EUR", direction: "IN", reason: "test",
 			wantErr: debt.ErrInvalidAmount,
 		},
 		{
 			name: "amount too high",
-			debtID: "d-1", ownerID: "u-1", walletID: "", amount: 10_000_001, currency: "EUR", direction: "IN", reason: "test",
+			debtID: "d-1", ownerID: "u-1", walletID: "w-1", amount: 10_000_001, currency: "EUR", direction: "IN", reason: "test",
 			wantErr: debt.ErrInvalidAmount,
 		},
 		{
 			name: "invalid currency",
-			debtID: "d-1", ownerID: "u-1", walletID: "", amount: 1000, currency: "GBP", direction: "IN", reason: "test",
+			debtID: "d-1", ownerID: "u-1", walletID: "w-1", amount: 1000, currency: "GBP", direction: "IN", reason: "test",
 			wantErr: debt.ErrInvalidCurrency,
 		},
 		{
 			name: "invalid direction",
-			debtID: "d-1", ownerID: "u-1", walletID: "", amount: 1000, currency: "EUR", direction: "BOTH", reason: "test",
+			debtID: "d-1", ownerID: "u-1", walletID: "w-1", amount: 1000, currency: "EUR", direction: "BOTH", reason: "test",
 			wantErr: debt.ErrInvalidDirection,
 		},
 		{
 			name: "missing reason",
-			debtID: "d-1", ownerID: "u-1", walletID: "", amount: 1000, currency: "EUR", direction: "IN", reason: "",
+			debtID: "d-1", ownerID: "u-1", walletID: "w-1", amount: 1000, currency: "EUR", direction: "IN", reason: "",
 			wantErr: debt.ErrMissingReason,
 		},
 	}
@@ -113,6 +108,55 @@ func TestCreate(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestSettle(t *testing.T) {
+	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
+	settleTime := time.Date(2026, 4, 29, 10, 0, 0, 0, time.UTC)
+
+	t.Run("settles a created debt", func(t *testing.T) {
+		agg, _ := debt.Create("debt-1", "user-1", "wallet-1", 1000, "EUR", "IN", "Dinner", now)
+		// Clear creation changes
+		_ = agg.Changes()
+
+		err := agg.Settle("user-1", settleTime)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if agg.Status() != debt.DebtStatusSettled {
+			t.Errorf("Status = %q, want %q", agg.Status(), debt.DebtStatusSettled)
+		}
+		changes := agg.Changes()
+		// Changes includes DebtRecorded + DebtSettled
+		found := false
+		for _, c := range changes {
+			if c.EventType() == "DebtSettled" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected DebtSettled event in changes")
+		}
+	})
+
+	t.Run("cannot settle twice", func(t *testing.T) {
+		agg, _ := debt.Create("debt-1", "user-1", "wallet-1", 1000, "EUR", "IN", "Dinner", now)
+		_ = agg.Settle("user-1", settleTime)
+
+		err := agg.Settle("user-1", settleTime)
+		if err != debt.ErrDebtAlreadySettled {
+			t.Errorf("err = %v, want %v", err, debt.ErrDebtAlreadySettled)
+		}
+	})
+
+	t.Run("missing settled_by", func(t *testing.T) {
+		agg, _ := debt.Create("debt-1", "user-1", "wallet-1", 1000, "EUR", "IN", "Dinner", now)
+
+		err := agg.Settle("", settleTime)
+		if err != debt.ErrMissingSettledBy {
+			t.Errorf("err = %v, want %v", err, debt.ErrMissingSettledBy)
+		}
+	})
 }
 
 func TestAggregate_Apply_DebtRecorded(t *testing.T) {
