@@ -42,6 +42,7 @@ import (
 	txprojections "github.com/jordisalazar/money-management/transaction/projections"
 	"github.com/jordisalazar/money-management/transaction/transfermoney"
 	"github.com/jordisalazar/money-management/wallet"
+	"github.com/jordisalazar/money-management/voice"
 	"github.com/jordisalazar/money-management/wallet/addwallet"
 	"github.com/jordisalazar/money-management/wallet/depositmoney"
 	"github.com/jordisalazar/money-management/wallet/getusermovements"
@@ -150,6 +151,15 @@ func main() {
 	getusermovements.RegisterQueries(r, walletStore, movementStore)
 	getdebts.RegisterQueries(r, debtStore)
 	getrecurringmovements.RegisterQueries(r, recurringMovementStore)
+
+	// Voice assistant
+	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
+	if anthropicKey != "" {
+		voice.RegisterRoutes(r, store, anthropicKey, walletStore, debtStore, recurringMovementStore)
+		log.Info("voice assistant enabled")
+	} else {
+		log.Info("voice assistant disabled (ANTHROPIC_API_KEY not set)")
+	}
 
 	// Outbox poller — routes by event_type to the appropriate reactor
 	debtReactor := settledebt.NewReactorHandler(store)
