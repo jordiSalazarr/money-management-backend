@@ -1,10 +1,15 @@
 package voice
 
 import (
+	"context"
+	"fmt"
 	"log/slog"
 	"net/http"
+	"strings"
 
 	"github.com/gin-gonic/gin"
+	dprojections "github.com/jordisalazar/money-management/debt/projections"
+	rmprojections "github.com/jordisalazar/money-management/recurringmovement/projections"
 	"github.com/jordisalazar/money-management/shared/middleware"
 )
 
@@ -12,10 +17,11 @@ import (
 type Handler struct {
 	client   *Client
 	executor *Executor
+	resolver *Resolver
 }
 
-func NewHandler(client *Client, executor *Executor) *Handler {
-	return &Handler{client: client, executor: executor}
+func NewHandler(client *Client, executor *Executor, resolver *Resolver) *Handler {
+	return &Handler{client: client, executor: executor, resolver: resolver}
 }
 
 type voiceRequest struct {
@@ -69,9 +75,12 @@ func (h *Handler) HandleVoiceCommand(c *gin.Context) {
 
 	slog.Info("voice command received", "user_id", userID, "text", req.Text)
 
-	// Step 1: Send to Claude for interpretation.
+	// Step 1: Build user context (wallet list, debts, etc.) for Claude.
+	userContext := h.buildUserContext(c.Request.Context(), userID)
+
+	// Step 2: Send to Claude for interpretation.
 	tools := AllTools()
-	result, err := h.client.Interpret(c.Request.Context(), req.Text, tools)
+	result, err := h.client.Interpret(c.Request.Context(), req.Text, tools, userContext)
 	if err != nil {
 		slog.Error("claude interpretation failed", "error", err)
 		c.JSON(http.StatusInternalServerError, voiceResponse{
@@ -81,7 +90,7 @@ func (h *Handler) HandleVoiceCommand(c *gin.Context) {
 		return
 	}
 
-	// Step 2: If Claude returned text instead of a tool call, it couldn't understand.
+	// Step 3: If Claude returned text instead of a tool call, it couldn't understand.
 	if result.Text != "" {
 		c.JSON(http.StatusOK, voiceResponse{
 			Status:  "error",
@@ -92,7 +101,7 @@ func (h *Handler) HandleVoiceCommand(c *gin.Context) {
 
 	slog.Info("voice command interpreted", "user_id", userID, "tool", result.ToolName)
 
-	// Step 3: Execute the command.
+	// Step 4: Execute the command.
 	execResult := h.executor.Execute(c.Request.Context(), userID, result.ToolName, result.ToolInput)
 
 	if execResult.NeedsClarify {
@@ -116,4 +125,56 @@ func (h *Handler) HandleVoiceCommand(c *gin.Context) {
 		Status:  "success",
 		Message: execResult.Message,
 	})
+}
+
+// buildUserContext fetches the user's wallets, debts, and recurring movements
+// and formats them as context for Claude so it can match spoken names to exact names.
+func (h *Handler) buildUserContext(ctx context.Context, userID string) string {
+	var parts []string
+
+	// Wallets
+	wallets, err := h.resolver.walletStore.ListByUserID(ctx, userID)
+	if err == nil && len(wallets) > 0 {
+		var lines []string
+		for _, w := range wallets {
+			lines = append(lines, fmt.Sprintf("- \"%s\" (%s, balance: %d cents)", w.Name, w.Currency, w.CurrentBalance))
+		}
+		parts = append(parts, "The user's wallets:\n"+strings.Join(lines, "\n"))
+	}
+
+	// Debts
+	status := "created"
+	debts, err := h.resolver.debtStore.List(ctx, dprojections.DebtFilter{OwnerID: userID, Status: &status})
+	if err == nil && len(debts) > 0 {
+		var lines []string
+		for _, d := range debts {
+			dir := "owed to user"
+			if d.Direction == "OUT" {
+				dir = "user owes"
+			}
+			lines = append(lines, fmt.Sprintf("- \"%s\" (%d cents %s, %s)", d.Reason, d.Amount, d.Currency, dir))
+		}
+		parts = append(parts, "The user's unsettled debts:\n"+strings.Join(lines, "\n"))
+	}
+
+	// Recurring movements
+	active := true
+	rms, err := h.resolver.recurringStore.List(ctx, rmprojections.RecurringMovementFilter{Active: &active})
+	if err == nil {
+		var lines []string
+		for _, rm := range rms {
+			if rm.UserID == userID {
+				lines = append(lines, fmt.Sprintf("- \"%s\" (%s %d cents %s on wallet)", rm.Reason, rm.Frequency, rm.Amount, rm.Type))
+			}
+		}
+		if len(lines) > 0 {
+			parts = append(parts, "The user's active recurring movements:\n"+strings.Join(lines, "\n"))
+		}
+	}
+
+	if len(parts) == 0 {
+		return "The user has no wallets, debts, or recurring movements yet."
+	}
+
+	return strings.Join(parts, "\n\n")
 }

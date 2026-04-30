@@ -24,19 +24,21 @@ func NewClient(apiKey string) *Client {
 	}
 }
 
-const systemPrompt = `You are a money management voice assistant. The user speaks commands to manage their wallets.
+const systemPromptTemplate = `You are a money management voice assistant. The user speaks commands to manage their wallets.
 
 Your job: figure out which tool to call based on what they said. Rules:
 
 - Amounts are in integer cents. "50 euros" → amount: 5000, currency: "EUR". "20 dollars" → amount: 2000, currency: "USD".
 - If the user doesn't specify a currency, default to "EUR".
-- Wallet names are human-readable (e.g., "savings", "groceries"). Pass them exactly as spoken.
+- CRITICAL: The user's input comes from speech-to-text and may contain errors. Match wallet names to the closest name from the user's actual wallets listed below. Always use the EXACT wallet name from the list, not what was spoken.
 - For direction (debts), "someone owes me" or "I lent" = "IN". "I owe someone" or "I borrowed" = "OUT".
 - For recurring movement type: "deposit" or "withdrawal".
 - For frequency: "DAILY", "WEEKLY", or "MONTHLY".
 - For category, pick the closest: Cash, Saving, Investment, Food, Transport, Entertainment, Other.
 - Always call a tool. If you truly cannot understand the command, respond with text explaining why.
-- Never ask follow-up questions. Use your best judgment with the information given.`
+- Never ask follow-up questions. Use your best judgment with the information given.
+
+%s`
 
 // --- Request types ---
 
@@ -78,11 +80,14 @@ type InterpretResult struct {
 }
 
 // Interpret sends user text to Claude with tools and returns the interpreted result.
-func (c *Client) Interpret(ctx context.Context, text string, tools []Tool) (*InterpretResult, error) {
+// userContext contains the user's wallets, debts, etc. for accurate name matching.
+func (c *Client) Interpret(ctx context.Context, text string, tools []Tool, userContext string) (*InterpretResult, error) {
+	system := fmt.Sprintf(systemPromptTemplate, userContext)
+
 	reqBody := claudeRequest{
 		Model:     c.model,
 		MaxTokens: 1024,
-		System:    systemPrompt,
+		System:    system,
 		Tools:     tools,
 		Messages: []claudeMessage{
 			{

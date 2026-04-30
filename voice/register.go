@@ -20,7 +20,7 @@ func RegisterRoutes(
 	client := NewClient(apiKey)
 	resolver := NewResolver(walletStore, debtStore, recurringStore)
 	executor := NewExecutor(store, resolver)
-	handler := NewHandler(client, executor)
+	handler := NewHandler(client, executor, resolver)
 
 	router.POST("/voice/command", handler.HandleVoiceCommand)
 }
