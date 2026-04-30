@@ -27,12 +27,12 @@ import (
 	dprojections "github.com/jordisalazar/money-management/debt/projections"
 	"github.com/jordisalazar/money-management/debt/recorddebt"
 	"github.com/jordisalazar/money-management/debt/settledebt"
-	"github.com/jordisalazar/money-management/recurringmovement"
-	rmprojections "github.com/jordisalazar/money-management/recurringmovement/projections"
-	"github.com/jordisalazar/money-management/recurringmovement/executerecurringmovement"
-	"github.com/jordisalazar/money-management/recurringmovement/recordrecurringmovement"
 	_ "github.com/jordisalazar/money-management/docs"
 	"github.com/jordisalazar/money-management/pkg/logger"
+	"github.com/jordisalazar/money-management/recurringmovement"
+	"github.com/jordisalazar/money-management/recurringmovement/executerecurringmovement"
+	rmprojections "github.com/jordisalazar/money-management/recurringmovement/projections"
+	"github.com/jordisalazar/money-management/recurringmovement/recordrecurringmovement"
 	"github.com/jordisalazar/money-management/shared/database"
 	"github.com/jordisalazar/money-management/shared/eventstore"
 	"github.com/jordisalazar/money-management/shared/middleware"
@@ -165,7 +165,7 @@ func main() {
 	log.Info("outbox poller started", "interval", "2s")
 
 	// Recurring movement processor — checks for due items every hour
-	rmProcessor := executerecurringmovement.NewProcessor(pool, store, 1*time.Hour)
+	rmProcessor := executerecurringmovement.NewProcessor(pool, store, 10*time.Second)
 	go rmProcessor.Start(context.Background())
 	log.Info("recurring movement processor started", "interval", "1h")
 
