@@ -14,4 +14,5 @@ var (
 	ErrMissingUserID        = errors.New("user_id is required")
 	ErrNotActive            = errors.New("recurring movement is not active")
 	ErrAlreadyExecutedToday = errors.New("recurring movement already executed today")
+	ErrNotOwner             = errors.New("only the owner can stop this movement")
 )

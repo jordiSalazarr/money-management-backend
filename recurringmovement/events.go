@@ -5,6 +5,7 @@ import "time"
 const (
 	EventTypeRecurringMovementRegistered = "RecurringMovementRegistered"
 	EventTypeRecurringMovementExecuted   = "RecurringMovementExecuted"
+	EventTypeRecurringMovementStopped    = "RecurringMovementStopped"
 )
 
 type RecurringMovementRegistered struct {
@@ -33,4 +34,15 @@ type RecurringMovementExecuted struct {
 
 func (e RecurringMovementExecuted) EventType() string {
 	return EventTypeRecurringMovementExecuted
+}
+
+type RecurringMovementStopped struct {
+	RecurringMovementID string    `json:"recurring_movement_id"`
+	StoppedBy           string    `json:"stopped_by"`
+	Reason              string    `json:"reason"`
+	StoppedAt           time.Time `json:"stopped_at"`
+}
+
+func (e RecurringMovementStopped) EventType() string {
+	return EventTypeRecurringMovementStopped
 }

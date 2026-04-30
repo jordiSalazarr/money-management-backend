@@ -217,6 +217,97 @@ func TestExecute(t *testing.T) {
 	})
 }
 
+func TestStop(t *testing.T) {
+	today := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+	now := time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)
+	startDate := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
+
+	t.Run("stops active recurring movement", func(t *testing.T) {
+		agg, _ := recurringmovement.Create(
+			"rm-1", "wallet-1", "user-1", "deposit",
+			1000, "EUR", "MONTHLY", "Salary",
+			startDate, time.Time{}, now, today,
+		)
+
+		err := agg.Stop("user-1", "no longer needed", now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if agg.Active() {
+			t.Error("expected active = false after stop")
+		}
+		found := false
+		for _, c := range agg.Changes() {
+			if c.EventType() == "RecurringMovementStopped" {
+				found = true
+			}
+		}
+		if !found {
+			t.Error("expected RecurringMovementStopped event in changes")
+		}
+	})
+
+	t.Run("stops with empty reason", func(t *testing.T) {
+		agg, _ := recurringmovement.Create(
+			"rm-1", "wallet-1", "user-1", "deposit",
+			1000, "EUR", "MONTHLY", "Salary",
+			startDate, time.Time{}, now, today,
+		)
+
+		err := agg.Stop("user-1", "", now)
+		if err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if agg.Active() {
+			t.Error("expected active = false after stop")
+		}
+	})
+
+	t.Run("cannot stop inactive recurring movement", func(t *testing.T) {
+		agg, _ := recurringmovement.Create(
+			"rm-1", "wallet-1", "user-1", "deposit",
+			1000, "EUR", "MONTHLY", "Salary",
+			startDate, time.Time{}, now, today,
+		)
+		_ = agg.Stop("user-1", "", now)
+
+		err := agg.Stop("user-1", "", now)
+		if err != recurringmovement.ErrNotActive {
+			t.Errorf("err = %v, want %v", err, recurringmovement.ErrNotActive)
+		}
+	})
+
+	t.Run("cannot stop if not owner", func(t *testing.T) {
+		agg, _ := recurringmovement.Create(
+			"rm-1", "wallet-1", "user-1", "deposit",
+			1000, "EUR", "MONTHLY", "Salary",
+			startDate, time.Time{}, now, today,
+		)
+
+		err := agg.Stop("other-user", "stealing", now)
+		if err != recurringmovement.ErrNotOwner {
+			t.Errorf("err = %v, want %v", err, recurringmovement.ErrNotOwner)
+		}
+		if !agg.Active() {
+			t.Error("expected active = true, stop should have been rejected")
+		}
+	})
+
+	t.Run("cannot execute after stop", func(t *testing.T) {
+		agg, _ := recurringmovement.Create(
+			"rm-1", "wallet-1", "user-1", "deposit",
+			1000, "EUR", "MONTHLY", "Salary",
+			startDate, time.Time{}, now, today,
+		)
+		_ = agg.Stop("user-1", "", now)
+
+		err := agg.Execute(today, now)
+		if err != recurringmovement.ErrNotActive {
+			t.Errorf("err = %v, want %v", err, recurringmovement.ErrNotActive)
+		}
+	})
+}
+
 func TestAggregate_Apply_RecurringMovementRegistered(t *testing.T) {
 	now := time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)
 	startDate := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)

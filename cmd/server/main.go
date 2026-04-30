@@ -34,6 +34,7 @@ import (
 	"github.com/jordisalazar/money-management/recurringmovement/getrecurringmovements"
 	rmprojections "github.com/jordisalazar/money-management/recurringmovement/projections"
 	"github.com/jordisalazar/money-management/recurringmovement/recordrecurringmovement"
+	"github.com/jordisalazar/money-management/recurringmovement/stoprecurringmovement"
 	"github.com/jordisalazar/money-management/shared/database"
 	"github.com/jordisalazar/money-management/shared/eventstore"
 	"github.com/jordisalazar/money-management/shared/middleware"
@@ -101,6 +102,7 @@ func main() {
 	store.RegisterEvent(debt.EventTypeDebtSettled, func() any { return &debt.DebtSettled{} })
 	store.RegisterEvent(recurringmovement.EventTypeRecurringMovementRegistered, func() any { return &recurringmovement.RecurringMovementRegistered{} })
 	store.RegisterEvent(recurringmovement.EventTypeRecurringMovementExecuted, func() any { return &recurringmovement.RecurringMovementExecuted{} })
+	store.RegisterEvent(recurringmovement.EventTypeRecurringMovementStopped, func() any { return &recurringmovement.RecurringMovementStopped{} })
 
 	// Projection stores — Postgres-backed read models
 	walletStore := wprojections.NewPostgresWalletStore(pool)
@@ -140,6 +142,7 @@ func main() {
 	recorddebt.RegisterCommands(r, store)
 	settledebt.RegisterCommands(r, store)
 	recordrecurringmovement.RegisterCommands(r, store)
+	stoprecurringmovement.RegisterCommands(r, store)
 
 	// Register queries — pass stores, not projectors
 	getuserwallets.RegisterQueries(r, walletStore)

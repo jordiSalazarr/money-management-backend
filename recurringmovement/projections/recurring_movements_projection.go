@@ -107,5 +107,20 @@ func (p *RecurringMovementsProjector) Handle(event any) {
 			slog.Error("recurring movements projector: upsert failed",
 				"recurring_movement_id", e.RecurringMovementID, "error", err)
 		}
+
+	case recurringmovement.RecurringMovementStopped:
+		view, ok := p.cache[e.RecurringMovementID]
+		if !ok {
+			slog.Error("recurring movements projector: not in cache",
+				"recurring_movement_id", e.RecurringMovementID)
+			return
+		}
+
+		view.Active = false
+
+		if err := p.store.Upsert(ctx, view); err != nil {
+			slog.Error("recurring movements projector: upsert failed",
+				"recurring_movement_id", e.RecurringMovementID, "error", err)
+		}
 	}
 }

@@ -99,6 +99,22 @@ func (a *Aggregate) LastExecutedDate() time.Time  { return a.lastExecutedDate }
 func (a *Aggregate) Version() int                 { return a.version }
 func (a *Aggregate) Changes() []DomainEvent       { return a.changes }
 
+func (a *Aggregate) Stop(stoppedBy string, reason string, now time.Time) error {
+	if !a.active {
+		return ErrNotActive
+	}
+	if stoppedBy != a.userID {
+		return ErrNotOwner
+	}
+	a.raise(RecurringMovementStopped{
+		RecurringMovementID: a.id,
+		StoppedBy:           stoppedBy,
+		Reason:              reason,
+		StoppedAt:           now,
+	})
+	return nil
+}
+
 func (a *Aggregate) Execute(executedForDate time.Time, now time.Time) error {
 	if !a.active {
 		return ErrNotActive
@@ -135,6 +151,8 @@ func (a *Aggregate) Apply(event any) {
 		a.active = true
 	case RecurringMovementExecuted:
 		a.lastExecutedDate = e.ExecutedForDate
+	case RecurringMovementStopped:
+		a.active = false
 	}
 	a.version++
 }

@@ -1,0 +1,51 @@
+slice: StopRecurringMovement
+
+commands:
+  - name: StopRecurringMovement
+    fields:
+      - name: recurring_movement_id
+        type: string
+        description: Aggregate ID, from URL path param
+      - name: stopped_by
+        type: string
+        description: User ID (from auth context)
+      - name: reason
+        type: string
+        description: Why the user is stopping it (optional, empty string if not provided)
+
+events:
+  - name: RecurringMovementStopped
+    produced_by: StopRecurringMovement
+    fields:
+      - name: recurring_movement_id
+        type: string
+        description: Aggregate ID
+      - name: stopped_by
+        type: string
+        description: User who stopped it
+      - name: reason
+        type: string
+        description: Empty string if not provided
+      - name: stopped_at
+        type: time.Time
+        description: Server-generated (UTC)
+
+invariants:
+  - description: Recurring movement must exist (loaded from event store)
+    enforced_by: StopRecurringMovement
+    error: ErrRecurringMovementNotFound
+  - description: Recurring movement must be active (active = true)
+    enforced_by: StopRecurringMovement
+    error: ErrNotActive
+  - description: stopped_by must match the aggregate's user_id (only the owner can stop it)
+    enforced_by: StopRecurringMovement
+    error: ErrNotOwner
+
+read_models:
+  - name: RecurringMovements
+    fed_by:
+      - RecurringMovementStopped
+    fields:
+      - name: active
+        type: bool
+        description: Set to false on RecurringMovementStopped
