@@ -19,7 +19,7 @@ type Client struct {
 func NewClient(apiKey string) *Client {
 	return &Client{
 		apiKey:     apiKey,
-		model:      "claude-sonnet-4-20250514",
+		model:      "claude-sonnet-4-6",
 		httpClient: http.DefaultClient,
 	}
 }
