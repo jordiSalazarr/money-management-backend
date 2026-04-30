@@ -3,7 +3,6 @@ package executerecurringmovement
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"time"
 
 	"github.com/google/uuid"
@@ -66,7 +65,7 @@ func (h *CommandHandler) Handle(ctx context.Context, cmd Command) error {
 		Type:                agg.Type(),
 		Amount:              agg.Amount(),
 		Currency:            agg.Currency(),
-		Reason:              fmt.Sprintf("recurring:%s", agg.ID()),
+		Reason:              agg.Reason(),
 	})
 	if err != nil {
 		return err
