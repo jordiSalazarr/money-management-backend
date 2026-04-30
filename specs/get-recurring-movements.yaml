@@ -1,0 +1,57 @@
+slice: getrecurringmovements
+aggregate: none
+read_only: true
+
+queries:
+  - name: GetRecurringMovements
+    fields:
+      - name: wallet_id
+        type: string
+        description: From URL path
+
+commands: []
+events: []
+invariants: []
+
+read_models:
+  - name: RecurringMovements
+    existing: true
+    fed_by:
+      - RecurringMovementRegistered
+      - RecurringMovementExecuted
+    fields:
+      - name: id
+        type: string
+        description: Recurring movement ID
+      - name: wallet_id
+        type: string
+        description: Wallet this movement belongs to
+      - name: user_id
+        type: string
+        description: Owner
+      - name: type
+        type: string
+        description: "deposit or withdrawal"
+      - name: amount
+        type: int
+        description: Positive integer cents
+      - name: currency
+        type: string
+      - name: frequency
+        type: string
+        description: "DAILY, WEEKLY, MONTHLY"
+      - name: reason
+        type: string
+      - name: start_date
+        type: time.Time
+      - name: end_date
+        type: "*time.Time"
+        description: Nullable — null means indefinite
+      - name: next_due_date
+        type: time.Time
+        description: Next scheduled execution
+      - name: active
+        type: bool
+        description: False when end_date passed or manually stopped
+      - name: created_at
+        type: time.Time

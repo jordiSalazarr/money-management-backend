@@ -31,6 +31,7 @@ import (
 	"github.com/jordisalazar/money-management/pkg/logger"
 	"github.com/jordisalazar/money-management/recurringmovement"
 	"github.com/jordisalazar/money-management/recurringmovement/executerecurringmovement"
+	"github.com/jordisalazar/money-management/recurringmovement/getrecurringmovements"
 	rmprojections "github.com/jordisalazar/money-management/recurringmovement/projections"
 	"github.com/jordisalazar/money-management/recurringmovement/recordrecurringmovement"
 	"github.com/jordisalazar/money-management/shared/database"
@@ -145,6 +146,7 @@ func main() {
 	getwalletmovements.RegisterQueries(r, movementStore)
 	getusermovements.RegisterQueries(r, walletStore, movementStore)
 	getdebts.RegisterQueries(r, debtStore)
+	getrecurringmovements.RegisterQueries(r, recurringMovementStore)
 
 	// Outbox poller — routes by event_type to the appropriate reactor
 	debtReactor := settledebt.NewReactorHandler(store)
