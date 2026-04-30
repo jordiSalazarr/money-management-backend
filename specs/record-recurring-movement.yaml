@@ -1,0 +1,124 @@
+slice: RecordRecurringMovement
+
+aggregate:
+  name: RecurringMovement
+  type: recurring_movement
+  existing: false
+
+commands:
+  - name: RecordRecurringMovement
+    fields:
+      - name: wallet_id
+        type: string
+        description: Target wallet
+      - name: user_id
+        type: string
+        description: From auth context
+      - name: type
+        type: string
+        description: "deposit or withdrawal"
+      - name: amount
+        type: int
+        description: Cents
+      - name: currency
+        type: string
+        description: EUR or USD
+      - name: frequency
+        type: string
+        description: DAILY, WEEKLY, or MONTHLY
+      - name: reason
+        type: string
+      - name: start_date
+        type: time.Time
+        description: First occurrence (>= today)
+      - name: end_date
+        type: time.Time
+        description: Optional, must be > start_date
+
+events:
+  - name: RecurringMovementRegistered
+    produced_by: RecordRecurringMovement
+    fields:
+      - name: recurring_movement_id
+        type: string
+      - name: wallet_id
+        type: string
+      - name: user_id
+        type: string
+      - name: type
+        type: string
+      - name: amount
+        type: int
+      - name: currency
+        type: string
+      - name: frequency
+        type: string
+      - name: reason
+        type: string
+      - name: start_date
+        type: time.Time
+      - name: end_date
+        type: time.Time
+      - name: registered_at
+        type: time.Time
+
+invariants:
+  - description: amount must be > 0 and <= 10_000_000
+    enforced_by: RecordRecurringMovement
+    error: ErrInvalidAmount
+  - description: currency must be EUR or USD
+    enforced_by: RecordRecurringMovement
+    error: ErrInvalidCurrency
+  - description: frequency must be DAILY, WEEKLY, or MONTHLY
+    enforced_by: RecordRecurringMovement
+    error: ErrInvalidFrequency
+  - description: type must be deposit or withdrawal
+    enforced_by: RecordRecurringMovement
+    error: ErrInvalidType
+  - description: reason must not be empty
+    enforced_by: RecordRecurringMovement
+    error: ErrMissingReason
+  - description: start_date must be >= today
+    enforced_by: RecordRecurringMovement
+    error: ErrInvalidStartDate
+  - description: end_date, if provided, must be > start_date
+    enforced_by: RecordRecurringMovement
+    error: ErrInvalidEndDate
+  - description: wallet_id must not be empty
+    enforced_by: RecordRecurringMovement
+    error: ErrMissingWalletID
+  - description: user_id must not be empty
+    enforced_by: RecordRecurringMovement
+    error: ErrMissingUserID
+
+read_models:
+  - name: RecurringMovements
+    fed_by:
+      - RecurringMovementRegistered
+    fields:
+      - name: id
+        type: string
+      - name: wallet_id
+        type: string
+      - name: user_id
+        type: string
+      - name: type
+        type: string
+      - name: amount
+        type: int
+      - name: currency
+        type: string
+      - name: frequency
+        type: string
+      - name: reason
+        type: string
+      - name: start_date
+        type: time.Time
+      - name: end_date
+        type: time.Time
+      - name: next_due_date
+        type: time.Time
+      - name: active
+        type: bool
+      - name: created_at
+        type: time.Time

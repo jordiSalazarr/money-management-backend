@@ -27,6 +27,10 @@ import (
 	dprojections "github.com/jordisalazar/money-management/debt/projections"
 	"github.com/jordisalazar/money-management/debt/recorddebt"
 	"github.com/jordisalazar/money-management/debt/settledebt"
+	"github.com/jordisalazar/money-management/recurringmovement"
+	rmprojections "github.com/jordisalazar/money-management/recurringmovement/projections"
+	"github.com/jordisalazar/money-management/recurringmovement/executerecurringmovement"
+	"github.com/jordisalazar/money-management/recurringmovement/recordrecurringmovement"
 	_ "github.com/jordisalazar/money-management/docs"
 	"github.com/jordisalazar/money-management/pkg/logger"
 	"github.com/jordisalazar/money-management/shared/database"
@@ -94,12 +98,15 @@ func main() {
 	store.RegisterEvent(transaction.EventTypeTransactionCompleted, func() any { return &transaction.TransactionCompleted{} })
 	store.RegisterEvent(debt.EventTypeDebtRecorded, func() any { return &debt.DebtRecorded{} })
 	store.RegisterEvent(debt.EventTypeDebtSettled, func() any { return &debt.DebtSettled{} })
+	store.RegisterEvent(recurringmovement.EventTypeRecurringMovementRegistered, func() any { return &recurringmovement.RecurringMovementRegistered{} })
+	store.RegisterEvent(recurringmovement.EventTypeRecurringMovementExecuted, func() any { return &recurringmovement.RecurringMovementExecuted{} })
 
 	// Projection stores — Postgres-backed read models
 	walletStore := wprojections.NewPostgresWalletStore(pool)
 	movementStore := wprojections.NewPostgresMovementStore(pool)
 	transactionStore := txprojections.NewPostgresTransactionStore(pool)
 	debtStore := dprojections.NewPostgresDebtStore(pool)
+	recurringMovementStore := rmprojections.NewPostgresRecurringMovementStore(pool)
 
 	// Projectors — subscribe to event store and write to projection stores
 	walletsProjector := wprojections.NewWalletsProjector(walletStore)
@@ -110,6 +117,8 @@ func main() {
 	store.Subscribe(movementsProjector)
 	store.Subscribe(transactionsProjector)
 	store.Subscribe(debtsProjector)
+	recurringMovementsProjector := rmprojections.NewRecurringMovementsProjector(recurringMovementStore)
+	store.Subscribe(recurringMovementsProjector)
 
 	// Replay existing events to hydrate projections on startup
 	if err := store.ReplayAll(context.Background()); err != nil {
@@ -129,6 +138,7 @@ func main() {
 	transfermoney.RegisterCommands(r, store)
 	recorddebt.RegisterCommands(r, store)
 	settledebt.RegisterCommands(r, store)
+	recordrecurringmovement.RegisterCommands(r, store)
 
 	// Register queries — pass stores, not projectors
 	getuserwallets.RegisterQueries(r, walletStore)
@@ -136,11 +146,28 @@ func main() {
 	getusermovements.RegisterQueries(r, walletStore, movementStore)
 	getdebts.RegisterQueries(r, debtStore)
 
-	// Outbox poller — processes DebtSettled events and dispatches wallet commands
-	reactorHandler := settledebt.NewReactorHandler(store)
-	poller := outbox.NewPoller(pool, reactorHandler, 2*time.Second)
+	// Outbox poller — routes by event_type to the appropriate reactor
+	debtReactor := settledebt.NewReactorHandler(store)
+	recurringReactor := executerecurringmovement.NewReactorHandler(store)
+	outboxRouter := func(ctx context.Context, entry outbox.Entry) error {
+		switch entry.EventType {
+		case debt.EventTypeDebtSettled:
+			return debtReactor(ctx, entry)
+		case recurringmovement.EventTypeRecurringMovementExecuted:
+			return recurringReactor(ctx, entry)
+		default:
+			slog.Warn("outbox: unknown event type", "event_type", entry.EventType)
+			return nil
+		}
+	}
+	poller := outbox.NewPoller(pool, outboxRouter, 2*time.Second)
 	go poller.Start(context.Background())
 	log.Info("outbox poller started", "interval", "2s")
+
+	// Recurring movement processor — checks for due items every hour
+	rmProcessor := executerecurringmovement.NewProcessor(pool, store, 1*time.Hour)
+	go rmProcessor.Start(context.Background())
+	log.Info("recurring movement processor started", "interval", "1h")
 
 	// Swagger UI
 	r.GET("/swagger/*any", ginSwagger.WrapHandler(swaggerFiles.Handler))

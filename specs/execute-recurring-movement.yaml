@@ -1,0 +1,75 @@
+slice: ExecuteRecurringMovement
+
+aggregate:
+  name: RecurringMovement
+  type: recurring_movement
+  existing: true
+
+commands:
+  - name: ExecuteRecurringMovement
+    internal: true
+    fields:
+      - name: recurring_movement_id
+        type: string
+        description: From processor read model query
+      - name: executed_for_date
+        type: time.Time
+        description: The date this execution covers (today)
+
+events:
+  - name: RecurringMovementExecuted
+    produced_by: ExecuteRecurringMovement
+    fields:
+      - name: recurring_movement_id
+        type: string
+      - name: executed_for_date
+        type: time.Time
+      - name: executed_at
+        type: time.Time
+
+invariants:
+  - description: Recurring movement must be active
+    enforced_by: ExecuteRecurringMovement
+    error: ErrNotActive
+  - description: last_executed_date must be < executed_for_date (prevents double execution)
+    enforced_by: ExecuteRecurringMovement
+    error: ErrAlreadyExecutedToday
+
+read_models:
+  - name: RecurringMovements
+    existing: true
+    fed_by:
+      - RecurringMovementExecuted
+    fields:
+      - name: next_due_date
+        type: time.Time
+      - name: active
+        type: bool
+
+outbox:
+  triggered_by: RecurringMovementExecuted
+  payload_fields:
+    - name: recurring_movement_id
+      type: string
+    - name: wallet_id
+      type: string
+    - name: user_id
+      type: string
+    - name: type
+      type: string
+    - name: amount
+      type: int
+    - name: currency
+      type: string
+    - name: reason
+      type: string
+  reactions:
+    - condition: type = deposit
+      dispatches: DepositMoney
+    - condition: type = withdrawal
+      dispatches: WithdrawMoney
+
+processor:
+  name: RecurringMovementScheduler
+  interval: 1h
+  query: "SELECT * FROM recurring_movements_view WHERE next_due_date <= CURRENT_DATE AND active = true"
