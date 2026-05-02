@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jordisalazar/money-management/shared/eventstore"
 	"github.com/jordisalazar/money-management/shared/middleware"
 	"github.com/jordisalazar/money-management/transaction"
 	"github.com/jordisalazar/money-management/wallet"
@@ -61,7 +62,7 @@ func TestGetWalletMovements_Deposit(t *testing.T) {
 		Currency:    "EUR",
 		Reason:      "Birthday gift",
 		DepositedAt: now,
-	})
+	}, eventstore.EventMetadata{EventID: "evt-deposit-1"})
 
 	req := httptest.NewRequest(http.MethodGet, "/wallets/wallet-1/movements", nil)
 	w := httptest.NewRecorder()
@@ -98,7 +99,7 @@ func TestGetWalletMovements_Withdrawal(t *testing.T) {
 		Reason:      "Lunch",
 		Category:    "Food",
 		WithdrawnAt: now,
-	})
+	}, eventstore.EventMetadata{EventID: "evt-withdrawal-1"})
 
 	req := httptest.NewRequest(http.MethodGet, "/wallets/wallet-1/movements", nil)
 	w := httptest.NewRecorder()
@@ -132,7 +133,7 @@ func TestGetWalletMovements_Transfer(t *testing.T) {
 		Currency:      "EUR",
 		Reason:        "Savings to cash",
 		CompletedAt:   now,
-	})
+	}, eventstore.EventMetadata{EventID: "evt-transfer-1"})
 
 	// Check source wallet — should have transfer_out
 	req := httptest.NewRequest(http.MethodGet, "/wallets/wallet-a/movements", nil)
@@ -167,8 +168,8 @@ func TestGetWalletMovements_IsolatedByWallet(t *testing.T) {
 	router, projector := setupRouter()
 	now := time.Date(2026, 4, 25, 14, 0, 0, 0, time.UTC)
 
-	projector.Handle(wallet.MoneyDeposited{WalletID: "wallet-1", UserID: "user-1", Amount: 5000, Currency: "EUR", DepositedAt: now})
-	projector.Handle(wallet.MoneyDeposited{WalletID: "wallet-2", UserID: "user-1", Amount: 3000, Currency: "EUR", DepositedAt: now})
+	projector.Handle(wallet.MoneyDeposited{WalletID: "wallet-1", UserID: "user-1", Amount: 5000, Currency: "EUR", DepositedAt: now}, eventstore.EventMetadata{EventID: "evt-dep-1"})
+	projector.Handle(wallet.MoneyDeposited{WalletID: "wallet-2", UserID: "user-1", Amount: 3000, Currency: "EUR", DepositedAt: now}, eventstore.EventMetadata{EventID: "evt-dep-2"})
 
 	req := httptest.NewRequest(http.MethodGet, "/wallets/wallet-1/movements", nil)
 	w := httptest.NewRecorder()

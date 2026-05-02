@@ -5,6 +5,7 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jordisalazar/money-management/shared/eventstore"
 	"github.com/jordisalazar/money-management/transaction"
 )
 
@@ -35,7 +36,7 @@ func NewTransactionsProjector(store TransactionStore) *TransactionsProjector {
 	return &TransactionsProjector{store: store}
 }
 
-func (p *TransactionsProjector) Handle(event any) {
+func (p *TransactionsProjector) Handle(event any, _ eventstore.EventMetadata) {
 	ctx := context.Background()
 
 	switch e := event.(type) {

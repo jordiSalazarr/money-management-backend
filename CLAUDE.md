@@ -81,6 +81,15 @@ Each slice exports a registration function:
 - Projections subscribe to events and build read-optimized views
 - Event store is append-only
 
+### Projection Idempotency (CRITICAL)
+
+Projections are replayed on every server startup via `ReplayAll()`. **Every projection must be idempotent** — replaying the same event twice must not create duplicate rows.
+
+- **Never use `uuid.New()` for projection row IDs.** Use deterministic IDs derived from event data: either from `meta.EventID` (passed via `EventMetadata`) or from a stable domain field (e.g., `WalletID`, `TransactionID`).
+- When one event produces multiple rows (e.g., `TransactionCompleted` → `transfer_out` + `transfer_in`), use `meta.EventID + "-suffix"` to keep IDs unique and stable.
+- Use `ON CONFLICT (id) DO NOTHING` for insert-only projections or `ON CONFLICT (id) DO UPDATE` for mutable projections.
+- The `Subscriber.Handle(event any, meta eventstore.EventMetadata)` interface provides `meta.EventID` — use it.
+
 ### Aggregate Event Ownership (CRITICAL)
 
 - **Aggregates own event creation, never handlers.** Command handlers NEVER create domain events directly.

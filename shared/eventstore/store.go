@@ -23,8 +23,14 @@ type AggregateEvents struct {
 	ExpectedVersion int
 }
 
+// EventMetadata carries envelope-level fields that projectors may need
+// (e.g. EventID for deterministic projection row IDs).
+type EventMetadata struct {
+	EventID string
+}
+
 type Subscriber interface {
-	Handle(event any)
+	Handle(event any, meta EventMetadata)
 }
 
 type Store interface {

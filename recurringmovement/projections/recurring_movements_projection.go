@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jordisalazar/money-management/recurringmovement"
+	"github.com/jordisalazar/money-management/shared/eventstore"
 )
 
 type RecurringMovementView struct {
@@ -59,7 +60,7 @@ func advanceDate(from time.Time, frequency string) time.Time {
 	}
 }
 
-func (p *RecurringMovementsProjector) Handle(event any) {
+func (p *RecurringMovementsProjector) Handle(event any, _ eventstore.EventMetadata) {
 	ctx := context.Background()
 
 	switch e := event.(type) {

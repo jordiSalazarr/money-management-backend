@@ -11,6 +11,7 @@ import (
 	"github.com/jordisalazar/money-management/recurringmovement"
 	"github.com/jordisalazar/money-management/recurringmovement/getrecurringmovements"
 	"github.com/jordisalazar/money-management/recurringmovement/projections"
+	"github.com/jordisalazar/money-management/shared/eventstore"
 	"github.com/jordisalazar/money-management/shared/middleware"
 )
 
@@ -65,7 +66,7 @@ func TestGetRecurringMovements_ReturnsMovementsForWallet(t *testing.T) {
 		Reason:              "Salary",
 		StartDate:           start,
 		RegisteredAt:        now,
-	})
+	}, eventstore.EventMetadata{})
 
 	req := httptest.NewRequest(http.MethodGet, "/wallets/wallet-1/recurring-movements", nil)
 	w := httptest.NewRecorder()
@@ -115,7 +116,7 @@ func TestGetRecurringMovements_IsolatedByWallet(t *testing.T) {
 		Reason:              "Salary",
 		StartDate:           start,
 		RegisteredAt:        now,
-	})
+	}, eventstore.EventMetadata{})
 	projector.Handle(recurringmovement.RecurringMovementRegistered{
 		RecurringMovementID: "rm-2",
 		WalletID:            "wallet-2",
@@ -127,7 +128,7 @@ func TestGetRecurringMovements_IsolatedByWallet(t *testing.T) {
 		Reason:              "Coffee subscription",
 		StartDate:           start,
 		RegisteredAt:        now,
-	})
+	}, eventstore.EventMetadata{})
 
 	req := httptest.NewRequest(http.MethodGet, "/wallets/wallet-1/recurring-movements", nil)
 	w := httptest.NewRecorder()
@@ -156,7 +157,7 @@ func TestGetRecurringMovements_SortedByCreatedAtDescending(t *testing.T) {
 		Reason:              "Older",
 		StartDate:           start,
 		RegisteredAt:        time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-	})
+	}, eventstore.EventMetadata{})
 	projector.Handle(recurringmovement.RecurringMovementRegistered{
 		RecurringMovementID: "rm-newer",
 		WalletID:            "wallet-1",
@@ -168,7 +169,7 @@ func TestGetRecurringMovements_SortedByCreatedAtDescending(t *testing.T) {
 		Reason:              "Newer",
 		StartDate:           start,
 		RegisteredAt:        time.Date(2026, 3, 1, 0, 0, 0, 0, time.UTC),
-	})
+	}, eventstore.EventMetadata{})
 
 	req := httptest.NewRequest(http.MethodGet, "/wallets/wallet-1/recurring-movements", nil)
 	w := httptest.NewRecorder()

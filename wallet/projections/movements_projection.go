@@ -5,7 +5,7 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/jordisalazar/money-management/shared/eventstore"
 	"github.com/jordisalazar/money-management/transaction"
 	"github.com/jordisalazar/money-management/wallet"
 )
@@ -25,7 +25,6 @@ type MovementView struct {
 type MovementStore interface {
 	Insert(ctx context.Context, view *MovementView) error
 	ListByWalletID(ctx context.Context, walletID string) ([]MovementView, error)
-	DeleteAll(ctx context.Context) error
 }
 
 type MovementsProjector struct {
@@ -36,13 +35,13 @@ func NewMovementsProjector(store MovementStore) *MovementsProjector {
 	return &MovementsProjector{store: store}
 }
 
-func (p *MovementsProjector) Handle(event any) {
+func (p *MovementsProjector) Handle(event any, meta eventstore.EventMetadata) {
 	ctx := context.Background()
 
 	switch e := event.(type) {
 	case wallet.MoneyDeposited:
 		view := &MovementView{
-			ID:         uuid.New().String(),
+			ID:         meta.EventID,
 			WalletID:   e.WalletID,
 			Type:       "deposit",
 			Amount:     e.Amount,
@@ -57,7 +56,7 @@ func (p *MovementsProjector) Handle(event any) {
 
 	case wallet.MoneyWithdrawn:
 		view := &MovementView{
-			ID:         uuid.New().String(),
+			ID:         meta.EventID,
 			WalletID:   e.WalletID,
 			Type:       "withdrawal",
 			Amount:     e.Amount,
@@ -72,7 +71,7 @@ func (p *MovementsProjector) Handle(event any) {
 
 	case transaction.TransactionCompleted:
 		out := &MovementView{
-			ID:         uuid.New().String(),
+			ID:         meta.EventID + "-out",
 			WalletID:   e.FromWalletID,
 			Type:       "transfer_out",
 			Amount:     e.Amount,
@@ -86,7 +85,7 @@ func (p *MovementsProjector) Handle(event any) {
 		}
 
 		in := &MovementView{
-			ID:         uuid.New().String(),
+			ID:         meta.EventID + "-in",
 			WalletID:   e.ToWalletID,
 			Type:       "transfer_in",
 			Amount:     e.Amount,

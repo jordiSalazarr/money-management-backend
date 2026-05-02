@@ -9,6 +9,7 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jordisalazar/money-management/shared/middleware"
 	"github.com/jordisalazar/money-management/wallet/getuserwallets"
+	"github.com/jordisalazar/money-management/shared/eventstore"
 	"github.com/jordisalazar/money-management/wallet/projections"
 )
 
@@ -51,9 +52,9 @@ func TestGetUserWallets_WithWallets(t *testing.T) {
 	router, projector := setupRouter()
 
 	// Feed the projector directly with wallet events
-	projector.Handle(walletAddedEvent("wallet-1", "user-1", "Savings", "My savings", 50000, "EUR", "Savings"))
-	projector.Handle(walletAddedEvent("wallet-2", "user-1", "Cash", "", 10000, "EUR", "Cash"))
-	projector.Handle(walletAddedEvent("wallet-3", "user-2", "Other user", "", 5000, "USD", "Investment"))
+	projector.Handle(walletAddedEvent("wallet-1", "user-1", "Savings", "My savings", 50000, "EUR", "Savings"), eventstore.EventMetadata{})
+	projector.Handle(walletAddedEvent("wallet-2", "user-1", "Cash", "", 10000, "EUR", "Cash"), eventstore.EventMetadata{})
+	projector.Handle(walletAddedEvent("wallet-3", "user-2", "Other user", "", 5000, "USD", "Investment"), eventstore.EventMetadata{})
 
 	req := httptest.NewRequest(http.MethodGet, "/wallets", nil)
 	w := httptest.NewRecorder()

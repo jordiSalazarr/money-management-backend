@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/jordisalazar/money-management/debt"
+	"github.com/jordisalazar/money-management/shared/eventstore"
 )
 
 // DebtView is the read model for a debt.
@@ -45,7 +46,7 @@ func NewDebtsProjector(store DebtStore) *DebtsProjector {
 	}
 }
 
-func (p *DebtsProjector) Handle(event any) {
+func (p *DebtsProjector) Handle(event any, _ eventstore.EventMetadata) {
 	ctx := context.Background()
 
 	switch e := event.(type) {

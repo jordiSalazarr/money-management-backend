@@ -126,12 +126,6 @@ func main() {
 	recurringMovementsProjector := rmprojections.NewRecurringMovementsProjector(recurringMovementStore)
 	store.Subscribe(recurringMovementsProjector)
 
-	// Clear non-idempotent projections before replay to prevent duplicates
-	if err := movementStore.DeleteAll(context.Background()); err != nil {
-		slog.Error("failed to clear movements projection", "error", err)
-		os.Exit(1)
-	}
-
 	// Replay existing events to hydrate projections on startup
 	if err := store.ReplayAll(context.Background()); err != nil {
 		slog.Error("failed to replay events", "error", err)

@@ -46,8 +46,9 @@ func (s *PostgresStore) notify(events []Event) {
 			continue
 		}
 		val := reflect.ValueOf(ptr).Elem().Interface()
+		meta := EventMetadata{EventID: e.EventID}
 		for _, sub := range s.subscribers {
-			sub.Handle(val)
+			sub.Handle(val, meta)
 		}
 	}
 }
