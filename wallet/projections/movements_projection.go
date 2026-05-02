@@ -6,7 +6,6 @@ import (
 	"time"
 
 	"github.com/jordisalazar/money-management/shared/eventstore"
-	"github.com/jordisalazar/money-management/transaction"
 	"github.com/jordisalazar/money-management/wallet"
 )
 
@@ -69,33 +68,5 @@ func (p *MovementsProjector) Handle(event any, meta eventstore.EventMetadata) {
 			slog.Error("movements projector: insert failed", "wallet_id", e.WalletID, "error", err)
 		}
 
-	case transaction.TransactionCompleted:
-		out := &MovementView{
-			ID:         meta.EventID + "-out",
-			WalletID:   e.FromWalletID,
-			Type:       "transfer_out",
-			Amount:     e.Amount,
-			Currency:   e.Currency,
-			Reason:     e.Reason,
-			Category:   "",
-			OccurredAt: e.CompletedAt,
-		}
-		if err := p.store.Insert(ctx, out); err != nil {
-			slog.Error("movements projector: insert failed", "wallet_id", e.FromWalletID, "error", err)
-		}
-
-		in := &MovementView{
-			ID:         meta.EventID + "-in",
-			WalletID:   e.ToWalletID,
-			Type:       "transfer_in",
-			Amount:     e.Amount,
-			Currency:   e.Currency,
-			Reason:     e.Reason,
-			Category:   "",
-			OccurredAt: e.CompletedAt,
-		}
-		if err := p.store.Insert(ctx, in); err != nil {
-			slog.Error("movements projector: insert failed", "wallet_id", e.ToWalletID, "error", err)
-		}
 	}
 }
