@@ -24,6 +24,13 @@ func (s *MemoryMovementStore) Insert(_ context.Context, view *MovementView) erro
 	return nil
 }
 
+func (s *MemoryMovementStore) DeleteAll(_ context.Context) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.movements = make(map[string][]MovementView)
+	return nil
+}
+
 func (s *MemoryMovementStore) ListByWalletID(_ context.Context, walletID string) ([]MovementView, error) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

@@ -25,6 +25,7 @@ type MovementView struct {
 type MovementStore interface {
 	Insert(ctx context.Context, view *MovementView) error
 	ListByWalletID(ctx context.Context, walletID string) ([]MovementView, error)
+	DeleteAll(ctx context.Context) error
 }
 
 type MovementsProjector struct {

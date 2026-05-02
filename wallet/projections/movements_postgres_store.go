@@ -25,6 +25,11 @@ func (s *PostgresMovementStore) Insert(ctx context.Context, view *MovementView) 
 	return err
 }
 
+func (s *PostgresMovementStore) DeleteAll(ctx context.Context) error {
+	_, err := s.pool.Exec(ctx, `DELETE FROM movements`)
+	return err
+}
+
 func (s *PostgresMovementStore) ListByWalletID(ctx context.Context, walletID string) ([]MovementView, error) {
 	rows, err := s.pool.Query(ctx, `
 		SELECT id, wallet_id, type, amount, currency, reason, category, occurred_at
