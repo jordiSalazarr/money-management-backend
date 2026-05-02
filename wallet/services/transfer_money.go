@@ -21,7 +21,7 @@ func TransferMoney(fromWallet, toWallet *wallet.Aggregate, cmd TransferMoneyComm
 		return err
 	}
 
-	if err := toWallet.Deposit(cmd.UserID, cmd.Amount, cmd.Currency, cmd.Reason, now); err != nil {
+	if err := toWallet.Deposit(cmd.UserID, cmd.Amount, cmd.Currency, cmd.Reason, "Transfer In", now); err != nil {
 		return err
 	}
 

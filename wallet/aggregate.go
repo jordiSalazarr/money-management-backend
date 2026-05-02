@@ -3,11 +3,20 @@ package wallet
 import "time"
 
 var validCurrencies = map[string]bool{"EUR": true, "USD": true}
-var validCategories = map[string]bool{"Saving": true, "Investment": true, "Cash": true}
+var validCategories = map[string]bool{
+	"Cash": true, "Checking": true, "Savings": true, "Credit Card": true,
+	"Investment": true, "Digital Wallet": true, "Loan": true, "Other": true,
+}
 var validWithdrawCategories = map[string]bool{
-	"Food": true, "Investment": true, "Clothing": true, "Travel": true,
-	"Entertainment": true, "Health": true, "Housing": true, "Transport": true,
-	"Education": true, "Subscriptions": true, "Gifts": true, "Other": true,
+	"Housing": true, "Food & Groceries": true, "Dining Out": true, "Transport": true,
+	"Health & Medical": true, "Entertainment": true, "Education": true, "Clothing": true,
+	"Subscriptions": true, "Travel": true, "Gifts & Donations": true, "Insurance": true,
+	"Utilities": true, "Personal Care": true, "Pets": true, "Other": true,
+}
+var validDepositCategories = map[string]bool{
+	"Salary": true, "Freelance": true, "Investment Return": true, "Refund": true,
+	"Gift": true, "Transfer In": true, "Rental Income": true, "Side Hustle": true,
+	"Other": true,
 }
 
 type DomainEvent interface {
@@ -21,6 +30,7 @@ type Aggregate struct {
 	currency  string
 	category  string
 	balance   int
+	disabled  bool
 	version   int
 	createdAt time.Time
 	changes   []DomainEvent
@@ -68,12 +78,34 @@ func (a *Aggregate) Currency() string        { return a.currency }
 func (a *Aggregate) Category() string        { return a.category }
 func (a *Aggregate) Changes() []DomainEvent  { return a.changes }
 
-func (a *Aggregate) Deposit(userID string, amount int, currency, reason string, now time.Time) error {
+func (a *Aggregate) Disabled() bool { return a.disabled }
+
+func (a *Aggregate) Disable(userID, reason string, now time.Time) error {
+	if a.disabled {
+		return ErrWalletAlreadyDisabled
+	}
+
+	a.raise(WalletDisabled{
+		WalletID:   a.id,
+		UserID:     userID,
+		DisabledAt: now,
+		Reason:     reason,
+	})
+	return nil
+}
+
+func (a *Aggregate) Deposit(userID string, amount int, currency, reason, category string, now time.Time) error {
+	if a.disabled {
+		return ErrWalletDisabled
+	}
 	if amount <= 0 {
 		return ErrInvalidAmount
 	}
 	if currency != a.currency {
 		return ErrCurrencyMismatch
+	}
+	if !validDepositCategories[category] {
+		return ErrInvalidDepositCategory
 	}
 
 	a.raise(MoneyDeposited{
@@ -82,12 +114,16 @@ func (a *Aggregate) Deposit(userID string, amount int, currency, reason string, 
 		Amount:      amount,
 		Currency:    currency,
 		Reason:      reason,
+		Category:    category,
 		DepositedAt: now,
 	})
 	return nil
 }
 
 func (a *Aggregate) Withdraw(userID string, amount int, currency, reason, category string, now time.Time) error {
+	if a.disabled {
+		return ErrWalletDisabled
+	}
 	if amount <= 0 {
 		return ErrInvalidAmount
 	}
@@ -132,6 +168,8 @@ func (a *Aggregate) Apply(event any) {
 		a.balance += e.Amount
 	case MoneyWithdrawn:
 		a.balance -= e.Amount
+	case WalletDisabled:
+		a.disabled = true
 	}
 	a.version++
 }

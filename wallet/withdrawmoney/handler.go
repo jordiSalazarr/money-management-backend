@@ -99,6 +99,8 @@ func mapError(err error) (int, ErrorResponse) {
 		return http.StatusBadRequest, ErrorResponse{ErrorCode: "invalid_category", Message: err.Error()}
 	case errors.Is(err, wallet.ErrInsufficientFunds):
 		return http.StatusBadRequest, ErrorResponse{ErrorCode: "insufficient_funds", Message: err.Error()}
+	case errors.Is(err, wallet.ErrWalletDisabled):
+		return http.StatusConflict, ErrorResponse{ErrorCode: "wallet_disabled", Message: err.Error()}
 	case errors.Is(err, eventstore.ErrAggregateNotFound):
 		return http.StatusNotFound, ErrorResponse{ErrorCode: "wallet_not_found", Message: "wallet not found"}
 	default:

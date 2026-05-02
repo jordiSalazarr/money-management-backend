@@ -76,6 +76,7 @@ type depositMoneyInput struct {
 	Amount     int    `json:"amount"`
 	Currency   string `json:"currency"`
 	Reason     string `json:"reason"`
+	Category   string `json:"category"`
 }
 
 type withdrawMoneyInput struct {
@@ -179,12 +180,15 @@ func (e *Executor) depositMoney(ctx context.Context, userID string, input json.R
 
 	currency := defaultStr(in.Currency, result.Wallet.Currency)
 
+	category := defaultStr(in.Category, "Other")
+
 	cmd := depositmoney.Command{
 		WalletID: result.Wallet.ID,
 		UserID:   userID,
 		Amount:   in.Amount,
 		Currency: currency,
 		Reason:   in.Reason,
+		Category: category,
 	}
 
 	handler := depositmoney.NewCommandHandler(e.store)
@@ -415,7 +419,8 @@ func (e *Executor) createRecurringMovement(ctx context.Context, userID string, i
 
 	currency := defaultStr(in.Currency, result.Wallet.Currency)
 
-	startDate := time.Now().UTC()
+	now := time.Now().UTC()
+	startDate := time.Date(now.Year(), now.Month(), now.Day(), 0, 0, 0, 0, time.UTC)
 	if in.StartDate != "" {
 		parsed, err := time.Parse("2006-01-02", in.StartDate)
 		if err == nil {

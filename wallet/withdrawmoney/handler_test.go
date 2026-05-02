@@ -60,7 +60,7 @@ func TestWithdrawMoney_Success(t *testing.T) {
 		"amount":   3000,
 		"currency": "EUR",
 		"reason":   "Lunch",
-		"category": "Food",
+		"category": "Food & Groceries",
 	}
 	jsonBody, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/wallets/"+walletID+"/withdraw", bytes.NewReader(jsonBody))
@@ -97,19 +97,19 @@ func TestWithdrawMoney_ValidationErrors(t *testing.T) {
 	}{
 		{
 			name:       "zero amount",
-			body:       map[string]any{"amount": 0, "currency": "EUR", "category": "Food"},
+			body:       map[string]any{"amount": 0, "currency": "EUR", "category": "Food & Groceries"},
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "invalid_amount",
 		},
 		{
 			name:       "negative amount",
-			body:       map[string]any{"amount": -100, "currency": "EUR", "category": "Food"},
+			body:       map[string]any{"amount": -100, "currency": "EUR", "category": "Food & Groceries"},
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "invalid_amount",
 		},
 		{
 			name:       "currency mismatch",
-			body:       map[string]any{"amount": 5000, "currency": "USD", "category": "Food"},
+			body:       map[string]any{"amount": 5000, "currency": "USD", "category": "Food & Groceries"},
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "currency_mismatch",
 		},
@@ -121,7 +121,7 @@ func TestWithdrawMoney_ValidationErrors(t *testing.T) {
 		},
 		{
 			name:       "insufficient funds",
-			body:       map[string]any{"amount": 10001, "currency": "EUR", "category": "Food"},
+			body:       map[string]any{"amount": 10001, "currency": "EUR", "category": "Food & Groceries"},
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "insufficient_funds",
 		},
@@ -157,7 +157,7 @@ func TestWithdrawMoney_WalletNotFound(t *testing.T) {
 	body := map[string]any{
 		"amount":   5000,
 		"currency": "EUR",
-		"category": "Food",
+		"category": "Food & Groceries",
 	}
 	jsonBody, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/wallets/nonexistent/withdraw", bytes.NewReader(jsonBody))

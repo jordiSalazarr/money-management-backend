@@ -48,6 +48,7 @@ func NewReactorHandler(store eventstore.Store) outbox.Handler {
 				Amount:   payload.Amount,
 				Currency: payload.Currency,
 				Reason:   payload.Reason,
+				Category: "Other",
 			})
 			if err != nil {
 				return fmt.Errorf("depositing for recurring movement %s: %w", payload.RecurringMovementID, err)

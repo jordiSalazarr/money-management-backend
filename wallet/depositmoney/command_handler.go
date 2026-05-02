@@ -34,7 +34,7 @@ func (h *CommandHandler) Handle(ctx context.Context, cmd Command) (int, error) {
 	}
 
 	now := time.Now().UTC()
-	if err := agg.Deposit(cmd.UserID, cmd.Amount, cmd.Currency, cmd.Reason, now); err != nil {
+	if err := agg.Deposit(cmd.UserID, cmd.Amount, cmd.Currency, cmd.Reason, cmd.Category, now); err != nil {
 		return 0, err
 	}
 
@@ -71,6 +71,12 @@ func unmarshalEvent(e eventstore.Event) (any, error) {
 		return evt, nil
 	case wallet.EventTypeMoneyDeposited:
 		var evt wallet.MoneyDeposited
+		if err := json.Unmarshal(e.Payload, &evt); err != nil {
+			return nil, err
+		}
+		return evt, nil
+	case wallet.EventTypeWalletDisabled:
+		var evt wallet.WalletDisabled
 		if err := json.Unmarshal(e.Payload, &evt); err != nil {
 			return nil, err
 		}

@@ -54,7 +54,7 @@ func createWallet(t *testing.T, router *gin.Engine, name string, initialAmount i
 
 func TestTransferMoney_Success(t *testing.T) {
 	router := setupRouter()
-	fromID := createWallet(t, router, "Savings", 10000, "EUR", "Saving")
+	fromID := createWallet(t, router, "Savings", 10000, "EUR", "Savings")
 	toID := createWallet(t, router, "Cash", 5000, "EUR", "Cash")
 
 	body := map[string]any{
@@ -86,7 +86,7 @@ func TestTransferMoney_Success(t *testing.T) {
 
 func TestTransferMoney_ValidationErrors(t *testing.T) {
 	router := setupRouter()
-	fromID := createWallet(t, router, "Savings", 10000, "EUR", "Saving")
+	fromID := createWallet(t, router, "Savings", 10000, "EUR", "Savings")
 	toID := createWallet(t, router, "Cash", 5000, "EUR", "Cash")
 	usdID := createWallet(t, router, "USD Wallet", 5000, "USD", "Cash")
 

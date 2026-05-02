@@ -23,6 +23,7 @@ type Request struct {
 	Amount   int    `json:"amount" example:"5000"`
 	Currency string `json:"currency" example:"EUR"`
 	Reason   string `json:"reason" example:"Salary"`
+	Category string `json:"category" example:"Salary"`
 }
 
 // Response is the result of a deposit.
@@ -70,6 +71,7 @@ func (h *Handler) DepositMoney(c *gin.Context) {
 		Amount:   req.Amount,
 		Currency: req.Currency,
 		Reason:   req.Reason,
+		Category: req.Category,
 	}
 
 	newBalance, err := h.cmdHandler.Handle(c.Request.Context(), cmd)
@@ -93,6 +95,10 @@ func mapError(err error) (int, ErrorResponse) {
 		return http.StatusBadRequest, ErrorResponse{ErrorCode: "invalid_amount", Message: err.Error()}
 	case errors.Is(err, wallet.ErrCurrencyMismatch):
 		return http.StatusBadRequest, ErrorResponse{ErrorCode: "currency_mismatch", Message: err.Error()}
+	case errors.Is(err, wallet.ErrInvalidDepositCategory):
+		return http.StatusBadRequest, ErrorResponse{ErrorCode: "invalid_category", Message: err.Error()}
+	case errors.Is(err, wallet.ErrWalletDisabled):
+		return http.StatusConflict, ErrorResponse{ErrorCode: "wallet_disabled", Message: err.Error()}
 	case errors.Is(err, eventstore.ErrAggregateNotFound):
 		return http.StatusNotFound, ErrorResponse{ErrorCode: "wallet_not_found", Message: "wallet not found"}
 	default:

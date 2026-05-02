@@ -3,9 +3,10 @@ package wallet
 import "time"
 
 const (
-	EventTypeWalletAdded    = "WalletAdded"
-	EventTypeMoneyDeposited = "MoneyDeposited"
-	EventTypeMoneyWithdrawn = "MoneyWithdrawn"
+	EventTypeWalletAdded     = "WalletAdded"
+	EventTypeMoneyDeposited  = "MoneyDeposited"
+	EventTypeMoneyWithdrawn  = "MoneyWithdrawn"
+	EventTypeWalletDisabled  = "WalletDisabled"
 )
 
 type WalletAdded struct {
@@ -27,6 +28,7 @@ type MoneyDeposited struct {
 	Amount      int       `json:"amount"`
 	Currency    string    `json:"currency"`
 	Reason      string    `json:"reason"`
+	Category    string    `json:"category"`
 	DepositedAt time.Time `json:"deposited_at"`
 }
 
@@ -43,3 +45,12 @@ type MoneyWithdrawn struct {
 }
 
 func (e MoneyWithdrawn) EventType() string { return EventTypeMoneyWithdrawn }
+
+type WalletDisabled struct {
+	WalletID   string    `json:"wallet_id"`
+	UserID     string    `json:"user_id"`
+	DisabledAt time.Time `json:"disabled_at"`
+	Reason     string    `json:"reason"`
+}
+
+func (e WalletDisabled) EventType() string { return EventTypeWalletDisabled }

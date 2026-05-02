@@ -22,7 +22,7 @@ func AllTools() []Tool {
 					"description":    {"type": "string", "description": "Optional wallet description"},
 					"initial_amount": {"type": "integer", "description": "Initial balance in cents. Default 0"},
 					"currency":       {"type": "string", "enum": ["EUR", "USD"], "description": "Currency. Default EUR"},
-					"category":       {"type": "string", "enum": ["Cash", "Saving", "Investment", "Food", "Transport", "Entertainment", "Other"], "description": "Wallet category. Default Other"}
+					"category":       {"type": "string", "enum": ["Cash", "Checking", "Savings", "Credit Card", "Investment", "Digital Wallet", "Loan", "Other"], "description": "Wallet category. Default Other"}
 				},
 				"required": ["name"]
 			}`),
@@ -36,7 +36,8 @@ func AllTools() []Tool {
 					"wallet_name": {"type": "string", "description": "Name of the wallet to deposit into"},
 					"amount":      {"type": "integer", "description": "Amount in cents"},
 					"currency":    {"type": "string", "enum": ["EUR", "USD"], "description": "Currency. Default EUR"},
-					"reason":      {"type": "string", "description": "Reason for the deposit"}
+					"reason":      {"type": "string", "description": "Reason for the deposit"},
+					"category":    {"type": "string", "enum": ["Salary", "Freelance", "Investment Return", "Refund", "Gift", "Transfer In", "Rental Income", "Side Hustle", "Other"], "description": "Income category. Default Other"}
 				},
 				"required": ["wallet_name", "amount"]
 			}`),
@@ -51,7 +52,7 @@ func AllTools() []Tool {
 					"amount":      {"type": "integer", "description": "Amount in cents"},
 					"currency":    {"type": "string", "enum": ["EUR", "USD"], "description": "Currency. Default EUR"},
 					"reason":      {"type": "string", "description": "Reason for the withdrawal"},
-					"category":    {"type": "string", "enum": ["Cash", "Saving", "Investment", "Food", "Transport", "Entertainment", "Other"], "description": "Expense category. Default Other"}
+					"category":    {"type": "string", "enum": ["Housing", "Food & Groceries", "Dining Out", "Transport", "Health & Medical", "Entertainment", "Education", "Clothing", "Subscriptions", "Travel", "Gifts & Donations", "Insurance", "Utilities", "Personal Care", "Pets", "Other"], "description": "Expense category. Default Other"}
 				},
 				"required": ["wallet_name", "amount"]
 			}`),

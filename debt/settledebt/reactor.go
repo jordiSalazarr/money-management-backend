@@ -49,6 +49,7 @@ func NewReactorHandler(store eventstore.Store) outbox.Handler {
 				Amount:   payload.Amount,
 				Currency: payload.Currency,
 				Reason:   reason,
+				Category: "Refund",
 			})
 			if err != nil {
 				return fmt.Errorf("depositing money for debt %s: %w", payload.DebtID, err)

@@ -35,7 +35,7 @@ func TestAddWallet_Success(t *testing.T) {
 		"description":    "Main savings account",
 		"initial_amount": 50000,
 		"currency":       "EUR",
-		"category":       "Saving",
+		"category":       "Savings",
 	}
 	jsonBody, _ := json.Marshal(body)
 

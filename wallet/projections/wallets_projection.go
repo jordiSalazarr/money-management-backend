@@ -19,6 +19,7 @@ type WalletView struct {
 	Category       string     `json:"category" example:"savings"`
 	CreatedAt      time.Time  `json:"created_at" example:"2026-04-26T10:00:00Z"`
 	LastMovementAt *time.Time `json:"last_movement_at" example:"2026-04-26T12:30:00Z"`
+	Disabled       bool       `json:"disabled" example:"false"`
 }
 
 type WalletStore interface {
@@ -78,6 +79,16 @@ func (p *WalletsProjector) Handle(event any) {
 		}
 		w.CurrentBalance -= e.Amount
 		w.LastMovementAt = &e.WithdrawnAt
+		if err := p.store.Upsert(ctx, w); err != nil {
+			slog.Error("wallets projector: upsert failed", "wallet_id", e.WalletID, "error", err)
+		}
+
+	case wallet.WalletDisabled:
+		w, ok := p.cache[e.WalletID]
+		if !ok {
+			return
+		}
+		w.Disabled = true
 		if err := p.store.Upsert(ctx, w); err != nil {
 			slog.Error("wallets projector: upsert failed", "wallet_id", e.WalletID, "error", err)
 		}

@@ -163,6 +163,12 @@ func unmarshalWalletEvent(e eventstore.Event) (any, error) {
 			return nil, err
 		}
 		return evt, nil
+	case wallet.EventTypeWalletDisabled:
+		var evt wallet.WalletDisabled
+		if err := json.Unmarshal(e.Payload, &evt); err != nil {
+			return nil, err
+		}
+		return evt, nil
 	default:
 		return nil, nil
 	}

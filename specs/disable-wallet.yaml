@@ -1,0 +1,46 @@
+slice: DisableWallet
+
+commands:
+  - name: DisableWallet
+    fields:
+      - name: wallet_id
+        type: string
+        description: Target wallet (from URL path)
+      - name: user_id
+        type: string
+        description: From JWT context
+      - name: reason
+        type: string
+        description: Why the wallet is being disabled (optional)
+      - name: disabled_at
+        type: time.Time
+        description: Server-generated (UTC)
+
+events:
+  - name: WalletDisabled
+    produced_by: DisableWallet
+    fields:
+      - name: wallet_id
+        type: string
+      - name: user_id
+        type: string
+      - name: disabled_at
+        type: time.Time
+      - name: reason
+        type: string
+
+invariants:
+  - description: Wallet must not already be disabled
+    enforced_by: DisableWallet
+    error: ErrWalletAlreadyDisabled
+  - description: Wallet must not be disabled (guard on existing commands)
+    enforced_by: all
+    error: ErrWalletDisabled
+
+read_models:
+  - name: WalletView
+    fed_by:
+      - WalletDisabled
+    fields:
+      - name: disabled
+        type: bool

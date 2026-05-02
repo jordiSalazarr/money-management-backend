@@ -47,7 +47,7 @@ func (p *MovementsProjector) Handle(event any) {
 			Amount:     e.Amount,
 			Currency:   e.Currency,
 			Reason:     e.Reason,
-			Category:   "",
+			Category:   e.Category,
 			OccurredAt: e.DepositedAt,
 		}
 		if err := p.store.Insert(ctx, view); err != nil {

@@ -60,6 +60,7 @@ func TestDepositMoney_Success(t *testing.T) {
 		"amount":   5000,
 		"currency": "EUR",
 		"reason":   "Birthday gift",
+		"category": "Gift",
 	}
 	jsonBody, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/wallets/"+walletID+"/deposit", bytes.NewReader(jsonBody))
@@ -96,21 +97,27 @@ func TestDepositMoney_ValidationErrors(t *testing.T) {
 	}{
 		{
 			name:       "zero amount",
-			body:       map[string]any{"amount": 0, "currency": "EUR"},
+			body:       map[string]any{"amount": 0, "currency": "EUR", "category": "Salary"},
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "invalid_amount",
 		},
 		{
 			name:       "negative amount",
-			body:       map[string]any{"amount": -100, "currency": "EUR"},
+			body:       map[string]any{"amount": -100, "currency": "EUR", "category": "Salary"},
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "invalid_amount",
 		},
 		{
 			name:       "currency mismatch",
-			body:       map[string]any{"amount": 5000, "currency": "USD"},
+			body:       map[string]any{"amount": 5000, "currency": "USD", "category": "Salary"},
 			wantStatus: http.StatusBadRequest,
 			wantCode:   "currency_mismatch",
+		},
+		{
+			name:       "invalid deposit category",
+			body:       map[string]any{"amount": 5000, "currency": "EUR", "category": "InvalidCat"},
+			wantStatus: http.StatusBadRequest,
+			wantCode:   "invalid_category",
 		},
 	}
 
@@ -144,6 +151,7 @@ func TestDepositMoney_WalletNotFound(t *testing.T) {
 	body := map[string]any{
 		"amount":   5000,
 		"currency": "EUR",
+		"category": "Salary",
 	}
 	jsonBody, _ := json.Marshal(body)
 	req := httptest.NewRequest(http.MethodPost, "/wallets/nonexistent/deposit", bytes.NewReader(jsonBody))

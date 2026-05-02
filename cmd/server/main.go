@@ -44,6 +44,7 @@ import (
 	"github.com/jordisalazar/money-management/wallet"
 	"github.com/jordisalazar/money-management/voice"
 	"github.com/jordisalazar/money-management/wallet/addwallet"
+	"github.com/jordisalazar/money-management/wallet/disablewallet"
 	"github.com/jordisalazar/money-management/wallet/depositmoney"
 	"github.com/jordisalazar/money-management/wallet/getusermovements"
 	"github.com/jordisalazar/money-management/wallet/getuserwallets"
@@ -98,6 +99,7 @@ func main() {
 	store.RegisterEvent(wallet.EventTypeWalletAdded, func() any { return &wallet.WalletAdded{} })
 	store.RegisterEvent(wallet.EventTypeMoneyDeposited, func() any { return &wallet.MoneyDeposited{} })
 	store.RegisterEvent(wallet.EventTypeMoneyWithdrawn, func() any { return &wallet.MoneyWithdrawn{} })
+	store.RegisterEvent(wallet.EventTypeWalletDisabled, func() any { return &wallet.WalletDisabled{} })
 	store.RegisterEvent(transaction.EventTypeTransactionCompleted, func() any { return &transaction.TransactionCompleted{} })
 	store.RegisterEvent(debt.EventTypeDebtRecorded, func() any { return &debt.DebtRecorded{} })
 	store.RegisterEvent(debt.EventTypeDebtSettled, func() any { return &debt.DebtSettled{} })
@@ -139,6 +141,7 @@ func main() {
 	addwallet.RegisterCommands(r, store)
 	depositmoney.RegisterCommands(r, store)
 	withdrawmoney.RegisterCommands(r, store)
+	disablewallet.RegisterCommands(r, store)
 	transfermoney.RegisterCommands(r, store)
 	recorddebt.RegisterCommands(r, store)
 	settledebt.RegisterCommands(r, store)

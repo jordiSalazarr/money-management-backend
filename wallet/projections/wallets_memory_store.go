@@ -2,6 +2,7 @@ package projections
 
 import (
 	"context"
+	"sort"
 	"sync"
 )
 
@@ -35,5 +36,11 @@ func (s *MemoryWalletStore) ListByUserID(_ context.Context, userID string) ([]Wa
 			result = append(result, *w)
 		}
 	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].Disabled != result[j].Disabled {
+			return !result[i].Disabled
+		}
+		return result[i].CreatedAt.Before(result[j].CreatedAt)
+	})
 	return result, nil
 }

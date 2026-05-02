@@ -6,4 +6,5 @@ type Command struct {
 	Amount   int
 	Currency string
 	Reason   string
+	Category string
 }
