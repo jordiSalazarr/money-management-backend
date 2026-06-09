@@ -1,10 +1,12 @@
 # AWS Migration Plan — Phase 4b (Bedrock for voice)
 
-**Status**: Draft for review
+**Status**: SHIPPED — backend `59a88c6`, infra `d255162`. One note below supersedes the original plan.
 **Last updated**: 2026-06-09
 **Reviewers**: jordi
 **Phase**: 4b — voice slice in-VPC
 **Repos in scope**: `backend`, `money-management-infra`.
+
+> **Update (post-merge): AWS retired the Bedrock "Model access" Console page.** Serverless foundation models auto-enable on first invocation, so the manual toggle described in §3.4 / §7 / §9 Q5 is obsolete. The only residual human step: if your AWS account has never used Anthropic models on Bedrock before, the first `Converse` call returns a "submit use case details" error with a link to a one-time form — fill it out and retry. IAM still gates access via the `bedrock_invoke` policy (unchanged).
 
 Phase 2-3 stood up the VPC with no NAT and three interface endpoints (kinesis-streams, secretsmanager, logs). Phase 4a made the payments Lambda live in that VPC. The voice slice has been off in prod ever since because it calls `https://api.anthropic.com/v1/messages` directly — public internet, unreachable without NAT.
 
