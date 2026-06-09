@@ -5,8 +5,9 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jordisalazar/money-management/internal/shared/eventstore"
+	"github.com/jordisalazar/money-management/internal/payments/transaction"
 	"github.com/jordisalazar/money-management/internal/payments/wallet"
+	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 )
 
 // MovementView is the read model for a wallet movement.
@@ -68,5 +69,36 @@ func (p *MovementsProjector) Handle(event any, meta eventstore.EventMetadata) {
 			slog.Error("movements projector: insert failed", "wallet_id", e.WalletID, "error", err)
 		}
 
+	case transaction.TransactionCompleted:
+		// One transaction event fans out to two movement rows. Suffixes
+		// on the projection ID keep the rows idempotent on replay (the
+		// CLAUDE.md projection-idempotency rule — never uuid.New()).
+		outView := &MovementView{
+			ID:         meta.EventID + "-out",
+			WalletID:   e.FromWalletID,
+			Type:       "transfer_out",
+			Amount:     e.Amount,
+			Currency:   e.Currency,
+			Reason:     e.Reason,
+			Category:   "Transfer Out",
+			OccurredAt: e.CompletedAt,
+		}
+		if err := p.store.Insert(ctx, outView); err != nil {
+			slog.Error("movements projector: insert failed", "wallet_id", e.FromWalletID, "error", err)
+		}
+
+		inView := &MovementView{
+			ID:         meta.EventID + "-in",
+			WalletID:   e.ToWalletID,
+			Type:       "transfer_in",
+			Amount:     e.Amount,
+			Currency:   e.Currency,
+			Reason:     e.Reason,
+			Category:   "Transfer In",
+			OccurredAt: e.CompletedAt,
+		}
+		if err := p.store.Insert(ctx, inView); err != nil {
+			slog.Error("movements projector: insert failed", "wallet_id", e.ToWalletID, "error", err)
+		}
 	}
 }
