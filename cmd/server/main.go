@@ -22,9 +22,8 @@ func main() {
 	log := logger.New()
 
 	r, cleanup, err := app.BuildEngine(context.Background(), log, app.Options{
-		StartBackgroundJobs: true,
-		MountQueryRoutes:    true,
-		DefaultStore:        app.StoreModePostgres,
+		MountQueryRoutes: true,
+		DefaultStore:     app.StoreModeMemory,
 	})
 	if err != nil {
 		log.Error("failed to build engine", "error", err)

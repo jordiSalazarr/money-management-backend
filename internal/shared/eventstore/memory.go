@@ -73,28 +73,6 @@ func (s *MemoryStore) Append(_ context.Context, aggregateID string, events []Eve
 	return nil
 }
 
-func (s *MemoryStore) AppendWithOutbox(_ context.Context, aggregateID string, events []Event, expectedVersion int, _ []OutboxEntry) error {
-	// In-memory implementation ignores outbox entries — they only matter for PostgreSQL.
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	existing := s.events[aggregateID]
-	currentVersion := len(existing)
-
-	if currentVersion != expectedVersion {
-		return ErrConcurrencyConflict
-	}
-
-	for i, e := range events {
-		e.Version = currentVersion + i + 1
-		existing = append(existing, e)
-	}
-
-	s.events[aggregateID] = existing
-	s.notify(events)
-	return nil
-}
-
 func (s *MemoryStore) AppendMulti(_ context.Context, batches []AggregateEvents) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()

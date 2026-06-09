@@ -12,7 +12,9 @@ permissions:
 env:
   GO_VERSION: '1.25'
   AWS_REGION: eu-west-1
-  LAMBDA_FUNCTION_NAME: mm-payments-dev
+  PAYMENTS_FN: mm-payments-dev
+  PROJECTOR_FN: mm-projector-dev
+  MIGRATE_FN: mm-migrate-dev
 
 jobs:
   test:
@@ -58,26 +60,46 @@ jobs:
         with:
           go-version: ${{ env.GO_VERSION }}
           cache: true
-      - name: Build linux/arm64 bootstrap
-        run: |
-          GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
-            go build -tags lambda.norpc -trimpath -ldflags='-s -w' \
-            -o bootstrap ./cmd/lambda
-          zip -j function.zip bootstrap
-          ls -lh function.zip
+      - name: Build all Lambda zips
+        run: make build-all-lambdas
       - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
-      - name: Update Lambda function code
+      - name: Update payments Lambda
         run: |
           aws lambda update-function-code \
-            --function-name "$LAMBDA_FUNCTION_NAME" \
-            --zip-file "fileb://function.zip"
-          aws lambda wait function-updated \
-            --function-name "$LAMBDA_FUNCTION_NAME"
-      - name: Show function configuration
+            --function-name "$PAYMENTS_FN" \
+            --zip-file fileb://lambda.zip
+          aws lambda wait function-updated --function-name "$PAYMENTS_FN"
+      - name: Update projector Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name "$PROJECTOR_FN" \
+            --zip-file fileb://projector.zip
+          aws lambda wait function-updated --function-name "$PROJECTOR_FN"
+      - name: Update migrate Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name "$MIGRATE_FN" \
+            --zip-file fileb://migrate.zip
+          aws lambda wait function-updated --function-name "$MIGRATE_FN"
+      - name: Run migrations
+        run: |
+          aws lambda invoke \
+            --function-name "$MIGRATE_FN" \
+            --cli-binary-format raw-in-base64-out \
+            --payload '{}' \
+            migrate-response.json \
+            >/dev/null
+          echo "migrate response:"
+          cat migrate-response.json
+          # Fail the job if the response carries an errorMessage.
+          if grep -q errorMessage migrate-response.json; then
+            echo "migration failed"; exit 1
+          fi
+      - name: Show payments configuration
         run: |
           aws lambda get-function-configuration \
-            --function-name "$LAMBDA_FUNCTION_NAME" \
+            --function-name "$PAYMENTS_FN" \
             --query '{Version:Version,LastModified:LastModified,LastUpdateStatus:LastUpdateStatus,Runtime:Runtime,Architectures:Architectures}'

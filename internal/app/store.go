@@ -9,15 +9,18 @@ import (
 
 	"github.com/jordisalazar/money-management/internal/auth"
 	"github.com/jordisalazar/money-management/internal/payments/debt"
+	dprojections "github.com/jordisalazar/money-management/internal/payments/debt/projections"
 	"github.com/jordisalazar/money-management/internal/payments/recurringmovement"
+	rmprojections "github.com/jordisalazar/money-management/internal/payments/recurringmovement/projections"
 	"github.com/jordisalazar/money-management/internal/payments/transaction"
+	txprojections "github.com/jordisalazar/money-management/internal/payments/transaction/projections"
 	"github.com/jordisalazar/money-management/internal/payments/wallet"
-	"github.com/jordisalazar/money-management/internal/shared/database"
+	wprojections "github.com/jordisalazar/money-management/internal/payments/wallet/projections"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 	"github.com/jordisalazar/money-management/pkg/logger"
 )
 
-// deps bundles the per-mode infra that BuildEngine then composes into a
+// deps bundles the per-mode infra that BuildEngine composes into a
 // gin.Engine. The shape is uniform across modes so engine.go doesn't have
 // to switch on StoreMode again — only the constructors do.
 type deps struct {
@@ -26,20 +29,16 @@ type deps struct {
 	userStore auth.UserStorer
 
 	// queriesReady is true only when read-model projection stores were
-	// constructed alongside the event store. That happens for postgres
-	// (Phase 1's only mode with projections); the dynamodb mode defers
-	// to the projector Lambda and the memory mode skips them.
+	// constructed alongside the event store. With the postgres event store
+	// gone (phase 2), that happens only in memory mode (sync projections
+	// in-process) or in dynamodb mode when AURORA_URL is set (handled by
+	// cmd/lambda directly, see internal/app/projector.go).
 	queriesReady bool
 	queries      queryStores
-
-	// pool is non-nil only for postgres mode. The startBackgroundJobs and
-	// Postgres-specific subsystems require it; other modes leave it nil.
-	pool *pgxpool.Pool
 }
 
 // resolveStoreMode reads STORE and falls back to opts.DefaultStore. The
-// caller's default is authoritative when STORE is unset so cmd/server
-// keeps defaulting to postgres while cmd/lambda picks dynamodb.
+// caller's default is authoritative when STORE is unset.
 func resolveStoreMode(opts Options) (StoreMode, error) {
 	raw := os.Getenv("STORE")
 	if raw == "" {
@@ -49,10 +48,10 @@ func resolveStoreMode(opts Options) (StoreMode, error) {
 		return opts.DefaultStore, nil
 	}
 	switch StoreMode(raw) {
-	case StoreModePostgres, StoreModeDynamoDB, StoreModeMemory:
+	case StoreModeDynamoDB, StoreModeMemory:
 		return StoreMode(raw), nil
 	default:
-		return "", fmt.Errorf("unknown STORE=%q (want postgres|dynamodb|memory)", raw)
+		return "", fmt.Errorf("unknown STORE=%q (want dynamodb|memory)", raw)
 	}
 }
 
@@ -60,8 +59,6 @@ func resolveStoreMode(opts Options) (StoreMode, error) {
 // lifecycle and returns a cleanup func; on error nothing leaks.
 func buildDeps(ctx context.Context, log logger.Logger, mode StoreMode) (deps, func(), error) {
 	switch mode {
-	case StoreModePostgres:
-		return buildPostgresDeps(ctx, log)
 	case StoreModeDynamoDB:
 		return buildDynamoDeps(ctx, log)
 	case StoreModeMemory:
@@ -69,46 +66,6 @@ func buildDeps(ctx context.Context, log logger.Logger, mode StoreMode) (deps, fu
 	default:
 		return deps{}, nil, fmt.Errorf("unsupported store mode: %s", mode)
 	}
-}
-
-func buildPostgresDeps(ctx context.Context, log logger.Logger) (deps, func(), error) {
-	databaseURL := os.Getenv("DATABASE_URL")
-	if databaseURL == "" {
-		databaseURL = "postgres://money:money@localhost:5432/money_management?sslmode=disable"
-	}
-
-	if applied, err := database.Migrate(databaseURL); err != nil {
-		return deps{}, nil, fmt.Errorf("running migrations: %w", err)
-	} else if applied > 0 {
-		log.Info("migrations applied", "count", applied)
-	}
-
-	pool, err := database.NewPool(ctx, databaseURL)
-	if err != nil {
-		return deps{}, nil, fmt.Errorf("connecting to database: %w", err)
-	}
-	cleanup := func() { pool.Close() }
-
-	store := eventstore.NewPostgresStore(pool)
-	registerDomainEvents(store)
-
-	queries := buildQueryStores(pool)
-	subscribeProjectors(store, queries, pool)
-
-	if err := store.ReplayAll(ctx); err != nil {
-		cleanup()
-		return deps{}, nil, fmt.Errorf("replaying events: %w", err)
-	}
-	log.Info("projections hydrated from event store")
-
-	return deps{
-		mode:         StoreModePostgres,
-		store:        store,
-		userStore:    auth.NewPostgresUserStore(pool),
-		queries:      queries,
-		queriesReady: true,
-		pool:         pool,
-	}, cleanup, nil
 }
 
 func buildDynamoDeps(ctx context.Context, log logger.Logger) (deps, func(), error) {
@@ -134,33 +91,80 @@ func buildDynamoDeps(ctx context.Context, log logger.Logger) (deps, func(), erro
 
 	log.Info("dynamodb store wired", "events_table", eventsTable, "users_table", usersTable)
 
+	// AURORA_URL is optional. When set we additionally open a pgxpool and
+	// build the Postgres-backed projection stores so GET handlers can
+	// serve real data. When unset (phase 1 deploy, infra still being
+	// stood up), the lambda runs POST-only and GETs 404.
+	auroraURL := os.Getenv("AURORA_URL")
+	if auroraURL == "" {
+		log.Info("AURORA_URL unset — GET handlers stay off (post-only mode)")
+		return deps{
+			mode:      StoreModeDynamoDB,
+			store:     store,
+			userStore: userStore,
+		}, func() {}, nil
+	}
+
+	pool, err := pgxpool.New(ctx, auroraURL)
+	if err != nil {
+		return deps{}, nil, fmt.Errorf("connecting to aurora: %w", err)
+	}
+	log.Info("aurora projection stores wired", "aurora_host_sanitised", sanitiseDSN(auroraURL))
+
 	return deps{
-		mode:      StoreModeDynamoDB,
-		store:     store,
-		userStore: userStore,
-	}, func() {}, nil
+		mode:         StoreModeDynamoDB,
+		store:        store,
+		userStore:    userStore,
+		queries:      buildAuroraQueryStores(pool),
+		queriesReady: true,
+	}, pool.Close, nil
 }
 
 func buildMemoryDeps(log logger.Logger) (deps, func(), error) {
 	store := eventstore.NewMemoryStore()
 	registerDomainEvents(store)
+
+	q := queryStores{
+		wallet:    wprojections.NewMemoryWalletStore(),
+		movement:  wprojections.NewMemoryMovementStore(),
+		debt:      dprojections.NewMemoryDebtStore(),
+		recurring: rmprojections.NewMemoryRecurringMovementStore(),
+	}
+	transactionStore := txprojections.NewMemoryTransactionStore()
+
+	store.Subscribe(wprojections.NewWalletsProjector(q.wallet))
+	store.Subscribe(wprojections.NewMovementsProjector(q.movement))
+	store.Subscribe(txprojections.NewTransactionsProjector(transactionStore))
+	store.Subscribe(dprojections.NewDebtsProjector(q.debt))
+	store.Subscribe(rmprojections.NewRecurringMovementsProjector(q.recurring))
+
 	log.Info("memory store wired (state is per-process, lost on exit)")
 	return deps{
-		mode:      StoreModeMemory,
-		store:     store,
-		userStore: auth.NewMemoryUserStore(),
+		mode:         StoreModeMemory,
+		store:        store,
+		userStore:    auth.NewMemoryUserStore(),
+		queries:      q,
+		queriesReady: true,
 	}, func() {}, nil
 }
 
-func registerDomainEvents(store eventstore.Store) {
-	store.RegisterEvent(wallet.EventTypeWalletAdded, func() any { return &wallet.WalletAdded{} })
-	store.RegisterEvent(wallet.EventTypeMoneyDeposited, func() any { return &wallet.MoneyDeposited{} })
-	store.RegisterEvent(wallet.EventTypeMoneyWithdrawn, func() any { return &wallet.MoneyWithdrawn{} })
-	store.RegisterEvent(wallet.EventTypeWalletDisabled, func() any { return &wallet.WalletDisabled{} })
-	store.RegisterEvent(transaction.EventTypeTransactionCompleted, func() any { return &transaction.TransactionCompleted{} })
-	store.RegisterEvent(debt.EventTypeDebtRecorded, func() any { return &debt.DebtRecorded{} })
-	store.RegisterEvent(debt.EventTypeDebtSettled, func() any { return &debt.DebtSettled{} })
-	store.RegisterEvent(recurringmovement.EventTypeRecurringMovementRegistered, func() any { return &recurringmovement.RecurringMovementRegistered{} })
-	store.RegisterEvent(recurringmovement.EventTypeRecurringMovementExecuted, func() any { return &recurringmovement.RecurringMovementExecuted{} })
-	store.RegisterEvent(recurringmovement.EventTypeRecurringMovementStopped, func() any { return &recurringmovement.RecurringMovementStopped{} })
+// eventRegistrar is the slim surface both eventstore.Store and the
+// projector.Dispatcher expose for receiving event-type factories.
+// Keeping registerDomainEvents polymorphic over it means the canonical
+// list of domain events lives in exactly one place.
+type eventRegistrar interface {
+	RegisterEvent(eventType string, factory func() any)
+}
+
+func registerDomainEvents(r eventRegistrar) {
+	r.RegisterEvent(wallet.EventTypeWalletAdded, func() any { return &wallet.WalletAdded{} })
+	r.RegisterEvent(wallet.EventTypeMoneyDeposited, func() any { return &wallet.MoneyDeposited{} })
+	r.RegisterEvent(wallet.EventTypeMoneyWithdrawn, func() any { return &wallet.MoneyWithdrawn{} })
+	r.RegisterEvent(wallet.EventTypeWalletDisabled, func() any { return &wallet.WalletDisabled{} })
+	r.RegisterEvent(transaction.EventTypeTransactionCompleted, func() any { return &transaction.TransactionCompleted{} })
+	r.RegisterEvent(debt.EventTypeDebtRecorded, func() any { return &debt.DebtRecorded{} })
+	r.RegisterEvent(debt.EventTypeDebtSettled, func() any { return &debt.DebtSettled{} })
+	r.RegisterEvent(recurringmovement.EventTypeRecurringMovementRegistered, func() any { return &recurringmovement.RecurringMovementRegistered{} })
+	r.RegisterEvent(recurringmovement.EventTypeRecurringMovementExecuted, func() any { return &recurringmovement.RecurringMovementExecuted{} })
+	r.RegisterEvent(recurringmovement.EventTypeRecurringMovementStopped, func() any { return &recurringmovement.RecurringMovementStopped{} })
 }

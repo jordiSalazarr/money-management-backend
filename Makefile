@@ -1,4 +1,4 @@
-.PHONY: help test build run build-lambda localstack-up localstack-down dev-dynamodb create-local-tables
+.PHONY: help test test-ddb build run build-lambda build-projector build-migrate build-all-lambdas localstack-up localstack-down dev-dynamodb create-local-tables
 
 LOCALSTACK_ENDPOINT ?= http://localhost:4566
 AWS_REGION          ?= eu-west-1
@@ -18,19 +18,33 @@ test: ## Run all Go tests (DDB contract tests skip without AWS_ENDPOINT_URL)
 test-ddb: localstack-up create-local-tables ## Run DDB contract tests against LocalStack
 	$(LS_AWS_ENV) go test ./internal/shared/eventstore/ -run TestDynamo -v
 
-build: ## Native build of both entry points
+build: ## Native build of every entry point
 	go build ./...
 
-run: ## Start cmd/server with the Postgres store
+run: ## Start cmd/server with the in-memory store (no infra needed)
 	go run ./cmd/server
 
-build-lambda: ## Cross-compile cmd/lambda to a bootstrap zip for Lambda arm64
+# Generic Lambda zip target. Call with CMD=lambda|projector|migrate.
+# Each invocation produces <CMD>.zip containing a bootstrap binary.
+build-lambda: ## Cross-compile a cmd/$(CMD) Lambda zip (CMD=lambda|projector|migrate)
+	@test -n "$(CMD)" || { echo "set CMD=lambda|projector|migrate"; exit 1; }
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
 		go build -tags lambda.norpc -trimpath -ldflags='-s -w' \
-		-o bootstrap ./cmd/lambda
-	zip -j function.zip bootstrap
+		-o bootstrap ./cmd/$(CMD)
+	zip -j $(CMD).zip bootstrap
 	rm bootstrap
-	@ls -lh function.zip
+	@ls -lh $(CMD).zip
+
+build-projector: ## Convenience target — build cmd/projector zip
+	$(MAKE) build-lambda CMD=projector
+
+build-migrate: ## Convenience target — build cmd/migrate zip
+	$(MAKE) build-lambda CMD=migrate
+
+build-all-lambdas: ## Build all three Lambda zips in sequence
+	$(MAKE) build-lambda CMD=lambda
+	$(MAKE) build-lambda CMD=projector
+	$(MAKE) build-lambda CMD=migrate
 
 localstack-up: ## Start the LocalStack DDB container (idempotent)
 	docker compose up -d localstack

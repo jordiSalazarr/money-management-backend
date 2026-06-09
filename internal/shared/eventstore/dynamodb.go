@@ -78,13 +78,6 @@ func (s *DynamoStore) Append(ctx context.Context, aggregateID string, events []E
 	return s.appendBatch(ctx, aggregateID, events, expectedVersion)
 }
 
-// AppendWithOutbox falls through to Append. The outbox argument is
-// silently dropped: DynamoDB Streams → Kinesis → reactor Lambdas replace
-// the in-database outbox in Phase 3.
-func (s *DynamoStore) AppendWithOutbox(ctx context.Context, aggregateID string, events []Event, expectedVersion int, _ []OutboxEntry) error {
-	return s.Append(ctx, aggregateID, events, expectedVersion)
-}
-
 func (s *DynamoStore) AppendMulti(ctx context.Context, batches []AggregateEvents) error {
 	var items []types.TransactWriteItem
 	for _, batch := range batches {

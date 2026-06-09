@@ -57,29 +57,10 @@ func (h *CommandHandler) Handle(ctx context.Context, cmd Command) error {
 		})
 	}
 
-	// Build outbox entry with all data the reactor needs
-	outboxPayload, err := json.Marshal(DebtSettledPayload{
-		DebtID:    agg.ID(),
-		WalletID:  agg.WalletID(),
-		Amount:    agg.Amount(),
-		Currency:  agg.Currency(),
-		Direction: agg.Direction(),
-		SettledBy: cmd.SettledBy,
-	})
-	if err != nil {
-		return err
-	}
-
-	outboxEntries := []eventstore.OutboxEntry{
-		{
-			ID:        uuid.New().String(),
-			EventType: debt.EventTypeDebtSettled,
-			Payload:   outboxPayload,
-			CreatedAt: now,
-		},
-	}
-
-	return h.store.AppendWithOutbox(ctx, cmd.DebtID, envelopes, len(events), outboxEntries)
+	// The reactor that turns a settled debt into a wallet deposit/withdrawal
+	// is wired up in phase 3 (Kinesis consumer Lambda). Phase 2 just persists
+	// the DebtSettled event; settlement won't move money until that lands.
+	return h.store.Append(ctx, cmd.DebtID, envelopes, len(events))
 }
 
 func unmarshalDebtEvent(e eventstore.Event) (any, error) {

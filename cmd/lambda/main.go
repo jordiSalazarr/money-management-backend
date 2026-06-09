@@ -34,10 +34,12 @@ func init() {
 	}
 
 	logr := logger.New()
+	// MountQueryRoutes is requested unconditionally; BuildEngine silently
+	// downgrades it to false when no projection stores were built (the
+	// AURORA_URL-unset case during the phase 1→2 transition).
 	engine, _, err := app.BuildEngine(context.Background(), logr, app.Options{
-		StartBackgroundJobs: false,
-		MountQueryRoutes:    false,
-		DefaultStore:        app.StoreModeDynamoDB,
+		MountQueryRoutes: true,
+		DefaultStore:     app.StoreModeDynamoDB,
 	})
 	if err != nil {
 		log.Fatalf("build engine: %v", err)

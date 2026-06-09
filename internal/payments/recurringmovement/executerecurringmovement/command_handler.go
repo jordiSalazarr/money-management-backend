@@ -57,30 +57,10 @@ func (h *CommandHandler) Handle(ctx context.Context, cmd Command) error {
 		})
 	}
 
-	// Build outbox entry with all data the reactor needs
-	outboxPayload, err := json.Marshal(RecurringMovementExecutedPayload{
-		RecurringMovementID: agg.ID(),
-		WalletID:            agg.WalletID(),
-		UserID:              agg.UserID(),
-		Type:                agg.Type(),
-		Amount:              agg.Amount(),
-		Currency:            agg.Currency(),
-		Reason:              agg.Reason(),
-	})
-	if err != nil {
-		return err
-	}
-
-	outboxEntries := []eventstore.OutboxEntry{
-		{
-			ID:        uuid.New().String(),
-			EventType: recurringmovement.EventTypeRecurringMovementExecuted,
-			Payload:   outboxPayload,
-			CreatedAt: now,
-		},
-	}
-
-	return h.store.AppendWithOutbox(ctx, cmd.RecurringMovementID, envelopes, len(events), outboxEntries)
+	// The reactor that turns a RecurringMovementExecuted event into a wallet
+	// deposit/withdrawal is wired up in phase 3 (Kinesis consumer Lambda).
+	// Phase 2 just persists the event; the wallet move follows in phase 3.
+	return h.store.Append(ctx, cmd.RecurringMovementID, envelopes, len(events))
 }
 
 func unmarshalEvent(e eventstore.Event) (any, error) {

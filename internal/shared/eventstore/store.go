@@ -35,7 +35,6 @@ type Subscriber interface {
 
 type Store interface {
 	Append(ctx context.Context, aggregateID string, events []Event, expectedVersion int) error
-	AppendWithOutbox(ctx context.Context, aggregateID string, events []Event, expectedVersion int, outbox []OutboxEntry) error
 	AppendMulti(ctx context.Context, batches []AggregateEvents) error
 	Load(ctx context.Context, aggregateID string) ([]Event, error)
 	LoadAll(ctx context.Context) ([]Event, error)
