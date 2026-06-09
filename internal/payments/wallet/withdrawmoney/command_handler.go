@@ -34,7 +34,7 @@ func (h *CommandHandler) Handle(ctx context.Context, cmd Command) (int, error) {
 	}
 
 	now := time.Now().UTC()
-	if err := agg.Withdraw(cmd.UserID, cmd.Amount, cmd.Currency, cmd.Reason, cmd.Category, now); err != nil {
+	if err := agg.Withdraw(cmd.UserID, cmd.Amount, cmd.Currency, cmd.Reason, cmd.Category, cmd.IdempotencyKey, now); err != nil {
 		return 0, err
 	}
 

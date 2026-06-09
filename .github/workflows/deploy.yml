@@ -15,6 +15,8 @@ env:
   PAYMENTS_FN: mm-payments-dev
   PROJECTOR_FN: mm-projector-dev
   MIGRATE_FN: mm-migrate-dev
+  REACTOR_FN: mm-reactor-dev
+  RECURRING_CRON_FN: mm-recurring-cron-dev
 
 jobs:
   test:
@@ -84,6 +86,18 @@ jobs:
             --function-name "$MIGRATE_FN" \
             --zip-file fileb://migrate.zip
           aws lambda wait function-updated --function-name "$MIGRATE_FN"
+      - name: Update reactor Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name "$REACTOR_FN" \
+            --zip-file fileb://reactor.zip
+          aws lambda wait function-updated --function-name "$REACTOR_FN"
+      - name: Update recurring-cron Lambda
+        run: |
+          aws lambda update-function-code \
+            --function-name "$RECURRING_CRON_FN" \
+            --zip-file fileb://recurring-cron.zip
+          aws lambda wait function-updated --function-name "$RECURRING_CRON_FN"
       - name: Run migrations
         run: |
           aws lambda invoke \

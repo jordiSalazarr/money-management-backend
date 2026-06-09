@@ -1,4 +1,4 @@
-.PHONY: help test test-ddb build run build-lambda build-projector build-migrate build-all-lambdas localstack-up localstack-down dev-dynamodb create-local-tables
+.PHONY: help test test-ddb build run build-lambda build-projector build-migrate build-reactor build-recurring-cron build-all-lambdas localstack-up localstack-down dev-dynamodb create-local-tables
 
 LOCALSTACK_ENDPOINT ?= http://localhost:4566
 AWS_REGION          ?= eu-west-1
@@ -24,10 +24,10 @@ build: ## Native build of every entry point
 run: ## Start cmd/server with the in-memory store (no infra needed)
 	go run ./cmd/server
 
-# Generic Lambda zip target. Call with CMD=lambda|projector|migrate.
+# Generic Lambda zip target. Call with CMD=lambda|projector|migrate|reactor|recurring-cron.
 # Each invocation produces <CMD>.zip containing a bootstrap binary.
-build-lambda: ## Cross-compile a cmd/$(CMD) Lambda zip (CMD=lambda|projector|migrate)
-	@test -n "$(CMD)" || { echo "set CMD=lambda|projector|migrate"; exit 1; }
+build-lambda: ## Cross-compile a cmd/$(CMD) Lambda zip (CMD=lambda|projector|migrate|reactor|recurring-cron)
+	@test -n "$(CMD)" || { echo "set CMD=lambda|projector|migrate|reactor|recurring-cron"; exit 1; }
 	GOOS=linux GOARCH=arm64 CGO_ENABLED=0 \
 		go build -tags lambda.norpc -trimpath -ldflags='-s -w' \
 		-o bootstrap ./cmd/$(CMD)
@@ -41,10 +41,18 @@ build-projector: ## Convenience target — build cmd/projector zip
 build-migrate: ## Convenience target — build cmd/migrate zip
 	$(MAKE) build-lambda CMD=migrate
 
-build-all-lambdas: ## Build all three Lambda zips in sequence
+build-reactor: ## Convenience target — build cmd/reactor zip
+	$(MAKE) build-lambda CMD=reactor
+
+build-recurring-cron: ## Convenience target — build cmd/recurring-cron zip
+	$(MAKE) build-lambda CMD=recurring-cron
+
+build-all-lambdas: ## Build all five Lambda zips in sequence
 	$(MAKE) build-lambda CMD=lambda
 	$(MAKE) build-lambda CMD=projector
 	$(MAKE) build-lambda CMD=migrate
+	$(MAKE) build-lambda CMD=reactor
+	$(MAKE) build-lambda CMD=recurring-cron
 
 localstack-up: ## Start the LocalStack DDB container (idempotent)
 	docker compose up -d localstack

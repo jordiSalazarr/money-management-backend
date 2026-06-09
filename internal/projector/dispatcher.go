@@ -18,6 +18,7 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
+	"github.com/jordisalazar/money-management/internal/projector/kinesisdecode"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 )
 
@@ -66,8 +67,8 @@ func (d *Dispatcher) HandleBatch(_ context.Context, recs []events.KinesisEventRe
 }
 
 func (d *Dispatcher) dispatchOne(r events.KinesisEventRecord) error {
-	var raw kinesisDDBRecord
-	if err := json.Unmarshal(r.Kinesis.Data, &raw); err != nil {
+	raw, err := kinesisdecode.Unmarshal(r.Kinesis.Data)
+	if err != nil {
 		return fmt.Errorf("decoding kinesis payload: %w", err)
 	}
 
@@ -91,7 +92,7 @@ func (d *Dispatcher) dispatchOne(r events.KinesisEventRecord) error {
 		return errors.New("missing dynamodb.NewImage")
 	}
 
-	eventType, ok := img.string("event_type")
+	eventType, ok := img.String("event_type")
 	if !ok {
 		return errors.New("missing event_type attribute")
 	}
@@ -102,53 +103,18 @@ func (d *Dispatcher) dispatchOne(r events.KinesisEventRecord) error {
 		return nil
 	}
 
-	rawPayload, _ := img.string("payload")
+	rawPayload, _ := img.String("payload")
 	ptr := factory()
 	if err := json.Unmarshal([]byte(rawPayload), ptr); err != nil {
 		return fmt.Errorf("unmarshalling %s payload: %w", eventType, err)
 	}
 	val := reflect.ValueOf(ptr).Elem().Interface()
 
-	eventID, _ := img.string("event_id")
+	eventID, _ := img.String("event_id")
 	meta := eventstore.EventMetadata{EventID: eventID}
 
 	for _, sub := range d.subscribers {
 		sub.Handle(val, meta)
 	}
 	return nil
-}
-
-// kinesisDDBRecord is the JSON wire format produced by DynamoDB's
-// "Kinesis data streams export" feature. Only the fields we read are
-// modelled; the rest are dropped on the floor.
-type kinesisDDBRecord struct {
-	EventName string `json:"eventName"`
-	Dynamodb  struct {
-		NewImage ddbImage `json:"NewImage"`
-	} `json:"dynamodb"`
-}
-
-// ddbImage is a thin wrapper around the attribute map. Each value is a
-// JSON object whose single key is the attribute's type tag — "S" for
-// string, "N" for number.
-type ddbImage map[string]ddbAttr
-
-type ddbAttr struct {
-	S *string `json:"S,omitempty"`
-	N *string `json:"N,omitempty"`
-}
-
-func (m ddbImage) string(name string) (string, bool) {
-	v, ok := m[name]
-	if !ok {
-		return "", false
-	}
-	switch {
-	case v.S != nil:
-		return *v.S, true
-	case v.N != nil:
-		return *v.N, true
-	default:
-		return "", false
-	}
 }

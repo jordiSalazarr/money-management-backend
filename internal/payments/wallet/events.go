@@ -30,6 +30,10 @@ type MoneyDeposited struct {
 	Reason      string    `json:"reason"`
 	Category    string    `json:"category"`
 	DepositedAt time.Time `json:"deposited_at"`
+	// IdempotencyKey is empty for HTTP-initiated deposits and carries the
+	// source Kinesis event_id for reactor-initiated deposits. When non-empty
+	// it lets the aggregate short-circuit on retries with ErrAlreadyProcessed.
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
 func (e MoneyDeposited) EventType() string { return EventTypeMoneyDeposited }
@@ -42,6 +46,9 @@ type MoneyWithdrawn struct {
 	Reason      string    `json:"reason"`
 	Category    string    `json:"category"`
 	WithdrawnAt time.Time `json:"withdrawn_at"`
+	// IdempotencyKey is empty for HTTP-initiated withdrawals and carries
+	// the source Kinesis event_id for reactor-initiated withdrawals.
+	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 
 func (e MoneyWithdrawn) EventType() string { return EventTypeMoneyWithdrawn }

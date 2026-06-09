@@ -17,11 +17,11 @@ type TransferMoneyCommand struct {
 
 func TransferMoney(fromWallet, toWallet *wallet.Aggregate, cmd TransferMoneyCommand) error {
 	now := time.Now()
-	if err := fromWallet.Withdraw(cmd.UserID, cmd.Amount, cmd.Currency, cmd.Reason, "Other", now); err != nil {
+	if err := fromWallet.Withdraw(cmd.UserID, cmd.Amount, cmd.Currency, cmd.Reason, "Other", "", now); err != nil {
 		return err
 	}
 
-	if err := toWallet.Deposit(cmd.UserID, cmd.Amount, cmd.Currency, cmd.Reason, "Transfer In", now); err != nil {
+	if err := toWallet.Deposit(cmd.UserID, cmd.Amount, cmd.Currency, cmd.Reason, "Transfer In", "", now); err != nil {
 		return err
 	}
 

@@ -1,6 +1,7 @@
 package wallet_test
 
 import (
+	"errors"
 	"testing"
 	"time"
 
@@ -126,7 +127,7 @@ func TestDeposit(t *testing.T) {
 	t.Run("deposits money successfully", func(t *testing.T) {
 		agg := createWallet()
 
-		err := agg.Deposit("user-1", 5000, "EUR", "Birthday gift", "Gift", depositTime)
+		err := agg.Deposit("user-1", 5000, "EUR", "Birthday gift", "Gift", "", depositTime)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -144,7 +145,7 @@ func TestDeposit(t *testing.T) {
 	t.Run("deposits without reason", func(t *testing.T) {
 		agg := createWallet()
 
-		err := agg.Deposit("user-1", 1000, "EUR", "", "Salary", depositTime)
+		err := agg.Deposit("user-1", 1000, "EUR", "", "Salary", "", depositTime)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -199,7 +200,7 @@ func TestDeposit(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			agg := createWallet()
-			err := agg.Deposit(tt.userID, tt.amount, tt.currency, tt.reason, tt.category, depositTime)
+			err := agg.Deposit(tt.userID, tt.amount, tt.currency, tt.reason, tt.category, "", depositTime)
 			if err != tt.wantErr {
 				t.Errorf("err = %v, want %v", err, tt.wantErr)
 			}
@@ -222,7 +223,7 @@ func TestWithdraw(t *testing.T) {
 	t.Run("withdraws money successfully", func(t *testing.T) {
 		agg := createWallet()
 
-		err := agg.Withdraw("user-1", 3000, "EUR", "Lunch", "Food & Groceries", withdrawTime)
+		err := agg.Withdraw("user-1", 3000, "EUR", "Lunch", "Food & Groceries", "", withdrawTime)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -240,7 +241,7 @@ func TestWithdraw(t *testing.T) {
 	t.Run("withdraws entire balance", func(t *testing.T) {
 		agg := createWallet()
 
-		err := agg.Withdraw("user-1", 10000, "EUR", "", "Other", withdrawTime)
+		err := agg.Withdraw("user-1", 10000, "EUR", "", "Other", "", withdrawTime)
 		if err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
@@ -283,7 +284,7 @@ func TestWithdraw(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			agg := createWallet()
-			err := agg.Withdraw(tt.userID, tt.amount, tt.currency, tt.reason, tt.category, withdrawTime)
+			err := agg.Withdraw(tt.userID, tt.amount, tt.currency, tt.reason, tt.category, "", withdrawTime)
 			if err != tt.wantErr {
 				t.Errorf("err = %v, want %v", err, tt.wantErr)
 			}
@@ -382,7 +383,7 @@ func TestDisable(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		err := agg.Deposit("user-1", 5000, "EUR", "gift", "Gift", disableTime)
+		err := agg.Deposit("user-1", 5000, "EUR", "gift", "Gift", "", disableTime)
 		if err != wallet.ErrWalletDisabled {
 			t.Errorf("err = %v, want %v", err, wallet.ErrWalletDisabled)
 		}
@@ -395,7 +396,7 @@ func TestDisable(t *testing.T) {
 			t.Fatalf("unexpected error: %v", err)
 		}
 
-		err := agg.Withdraw("user-1", 3000, "EUR", "lunch", "Food & Groceries", disableTime)
+		err := agg.Withdraw("user-1", 3000, "EUR", "lunch", "Food & Groceries", "", disableTime)
 		if err != wallet.ErrWalletDisabled {
 			t.Errorf("err = %v, want %v", err, wallet.ErrWalletDisabled)
 		}
@@ -433,4 +434,77 @@ func TestAggregate_Apply_WalletDisabled(t *testing.T) {
 	if len(agg.Changes()) != 0 {
 		t.Errorf("Changes = %d, want 0 (Apply should not track changes)", len(agg.Changes()))
 	}
+}
+
+func TestIdempotencyKey(t *testing.T) {
+	now := time.Date(2026, 4, 24, 12, 0, 0, 0, time.UTC)
+	createWallet := func() *wallet.Aggregate {
+		agg, err := wallet.Create("wallet-1", "user-1", "Test", "", 0, "EUR", "Cash", now)
+		if err != nil {
+			t.Fatalf("create: %v", err)
+		}
+		return agg
+	}
+
+	t.Run("deposit with empty key always succeeds", func(t *testing.T) {
+		agg := createWallet()
+		if err := agg.Deposit("user-1", 100, "EUR", "", "Salary", "", now); err != nil {
+			t.Fatalf("first deposit: %v", err)
+		}
+		if err := agg.Deposit("user-1", 100, "EUR", "", "Salary", "", now); err != nil {
+			t.Fatalf("second deposit with empty key: %v", err)
+		}
+		if agg.Balance() != 200 {
+			t.Errorf("balance = %d, want 200 (two empty-key deposits should both apply)", agg.Balance())
+		}
+	})
+
+	t.Run("deposit with same non-empty key short-circuits", func(t *testing.T) {
+		agg := createWallet()
+		if err := agg.Deposit("user-1", 100, "EUR", "", "Salary", "evt-1", now); err != nil {
+			t.Fatalf("first deposit: %v", err)
+		}
+		err := agg.Deposit("user-1", 100, "EUR", "", "Salary", "evt-1", now)
+		if !errors.Is(err, wallet.ErrAlreadyProcessed) {
+			t.Fatalf("got %v, want ErrAlreadyProcessed", err)
+		}
+		if agg.Balance() != 100 {
+			t.Errorf("balance = %d, want 100 (second call should be a no-op)", agg.Balance())
+		}
+	})
+
+	t.Run("withdraw with same non-empty key short-circuits", func(t *testing.T) {
+		agg := createWallet()
+		if err := agg.Deposit("user-1", 500, "EUR", "", "Salary", "", now); err != nil {
+			t.Fatalf("seed deposit: %v", err)
+		}
+		if err := agg.Withdraw("user-1", 200, "EUR", "", "Food & Groceries", "evt-w-1", now); err != nil {
+			t.Fatalf("first withdraw: %v", err)
+		}
+		err := agg.Withdraw("user-1", 200, "EUR", "", "Food & Groceries", "evt-w-1", now)
+		if !errors.Is(err, wallet.ErrAlreadyProcessed) {
+			t.Fatalf("got %v, want ErrAlreadyProcessed", err)
+		}
+		if agg.Balance() != 300 {
+			t.Errorf("balance = %d, want 300", agg.Balance())
+		}
+	})
+
+	t.Run("idempotency keys rebuild on hydration", func(t *testing.T) {
+		agg := wallet.NewAggregate()
+		agg.Apply(wallet.WalletAdded{
+			WalletID: "wallet-1", UserID: "user-1", Name: "Test",
+			InitialAmount: 0, Currency: "EUR", Category: "Cash", CreatedAt: now,
+		})
+		agg.Apply(wallet.MoneyDeposited{
+			WalletID: "wallet-1", UserID: "user-1", Amount: 100,
+			Currency: "EUR", Category: "Salary", DepositedAt: now,
+			IdempotencyKey: "evt-1",
+		})
+
+		err := agg.Deposit("user-1", 100, "EUR", "", "Salary", "evt-1", now)
+		if !errors.Is(err, wallet.ErrAlreadyProcessed) {
+			t.Fatalf("got %v, want ErrAlreadyProcessed after hydration", err)
+		}
+	})
 }

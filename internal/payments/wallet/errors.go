@@ -15,4 +15,8 @@ var (
 	ErrInvalidDepositCategory  = errors.New("category must be a valid income category")
 	ErrWalletDisabled          = errors.New("wallet is disabled")
 	ErrWalletAlreadyDisabled   = errors.New("wallet is already disabled")
+	// ErrAlreadyProcessed is returned by Deposit/Withdraw when the supplied
+	// IdempotencyKey has already been applied to this aggregate. Reactor
+	// retries from Kinesis hit this path; HTTP callers never set the key.
+	ErrAlreadyProcessed = errors.New("operation already processed for this idempotency key")
 )
