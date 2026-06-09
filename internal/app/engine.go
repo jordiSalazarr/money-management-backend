@@ -8,6 +8,7 @@ import (
 	"github.com/gin-gonic/gin"
 
 	"github.com/jordisalazar/money-management/internal/shared/middleware"
+	"github.com/jordisalazar/money-management/internal/voice"
 	"github.com/jordisalazar/money-management/pkg/logger"
 )
 
@@ -33,26 +34,41 @@ func BuildEngine(ctx context.Context, log logger.Logger, opts Options) (*gin.Eng
 	r.Use(middleware.CORS())
 	r.Use(middleware.Correlation())
 	r.Use(middleware.Logging(log))
-	// Phase 4: API Gateway's JWT authorizer validates Cognito tokens at
-	// the edge; this middleware just extracts the sub claim from the
-	// proxy adapter's stashed context value. Swagger UI is the only
-	// route allowed through unauthenticated.
 	r.Use(middleware.CognitoAuth([]string{"/swagger/"}, nil))
 
-	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
 	mountQueries := opts.MountQueryRoutes && d.queriesReady
-	switch {
-	case anthropicKey == "":
-		log.Info("voice assistant disabled (ANTHROPIC_API_KEY not set)")
-	case mountQueries:
-		log.Info("voice assistant enabled")
-	default:
-		log.Info("voice assistant disabled (projection stores not available in this mode)")
-	}
 
-	effectiveOpts := opts
-	effectiveOpts.MountQueryRoutes = mountQueries
-	registerRoutes(r, d.store, anthropicKey, d.queries, effectiveOpts)
+	// Voice slice picks its backend from env vars. ANTHROPIC_API_KEY
+	// signals local-dev mode (use the direct API path); otherwise we
+	// fall through to Bedrock and rely on the default AWS credential
+	// chain + the IAM policy the infra attaches.
+	voiceOpts := voice.ClientOptions{
+		BedrockModelID:  os.Getenv("BEDROCK_MODEL_ID"),
+		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
+	}
+	mountVoice := mountQueries // voice depends on projection stores too
+	logVoiceDecision(log, mountQueries, voiceOpts)
+
+	registerRoutes(ctx, r, d.store, voiceOpts, mountVoice, d.queries, applyMountQueries(opts, mountQueries))
 
 	return r, cleanup, nil
+}
+
+// applyMountQueries returns a copy of opts with MountQueryRoutes set to
+// the effective value (the requested flag AND the deps actually being
+// ready). Avoids the registerRoutes caller having to mutate opts.
+func applyMountQueries(opts Options, mountQueries bool) Options {
+	opts.MountQueryRoutes = mountQueries
+	return opts
+}
+
+func logVoiceDecision(log logger.Logger, mountQueries bool, opts voice.ClientOptions) {
+	switch {
+	case !mountQueries:
+		log.Info("voice assistant disabled (projection stores not available)")
+	case opts.AnthropicAPIKey != "":
+		log.Info("voice assistant enabled — direct Anthropic API (local dev)")
+	default:
+		log.Info("voice assistant enabled — Bedrock", "model", opts.BedrockModelID)
+	}
 }

@@ -15,12 +15,12 @@ import (
 
 // Handler handles voice command HTTP requests.
 type Handler struct {
-	client   *Client
+	client   Backend
 	executor *Executor
 	resolver *Resolver
 }
 
-func NewHandler(client *Client, executor *Executor, resolver *Resolver) *Handler {
+func NewHandler(client Backend, executor *Executor, resolver *Resolver) *Handler {
 	return &Handler{client: client, executor: executor, resolver: resolver}
 }
 

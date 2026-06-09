@@ -1,6 +1,10 @@
 package app
 
 import (
+	"context"
+	"fmt"
+	"os"
+
 	"github.com/gin-gonic/gin"
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
@@ -41,9 +45,11 @@ type queryStores struct {
 }
 
 func registerRoutes(
+	ctx context.Context,
 	r *gin.Engine,
 	store eventstore.Store,
-	anthropicKey string,
+	voiceOpts voice.ClientOptions,
+	mountVoice bool,
 	queries queryStores,
 	opts Options,
 ) {
@@ -69,8 +75,14 @@ func registerRoutes(
 		getdebts.RegisterQueries(r, queries.debt)
 		getrecurringmovements.RegisterQueries(r, queries.recurring)
 
-		if anthropicKey != "" {
-			voice.RegisterRoutes(r, store, anthropicKey, queries.wallet, queries.debt, queries.recurring)
+		if mountVoice {
+			// Bedrock backend construction can fail (e.g. AWS config
+			// load). Don't fail the whole engine — log + skip mounting.
+			if err := voice.RegisterRoutes(ctx, r, store, voiceOpts, queries.wallet, queries.debt, queries.recurring); err != nil {
+				// We can't log structured here without plumbing logger
+				// through; print to stderr is fine for a startup error.
+				fmt.Fprintf(os.Stderr, "voice: registration failed, slice disabled: %v\n", err)
+			}
 		}
 	}
 
