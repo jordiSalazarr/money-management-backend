@@ -21,7 +21,7 @@ var validDepositCategories = map[string]bool{
 
 const (
 	MaxInitialAmount = 10_000_000
-	MinInitialAmount = 10_000_000
+	MinInitialAmount = 0
 )
 
 // TODO: this should be shared
