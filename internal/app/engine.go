@@ -29,16 +29,15 @@ func BuildEngine(ctx context.Context, log logger.Logger, opts Options) (*gin.Eng
 		return nil, nil, err
 	}
 
-	jwtSecret := os.Getenv("JWT_SECRET")
-	if jwtSecret == "" {
-		jwtSecret = "dev-secret-do-not-use-in-production"
-	}
-
 	r := gin.New()
 	r.Use(middleware.CORS())
 	r.Use(middleware.Correlation())
 	r.Use(middleware.Logging(log))
-	r.Use(middleware.Auth(jwtSecret))
+	// Phase 4: API Gateway's JWT authorizer validates Cognito tokens at
+	// the edge; this middleware just extracts the sub claim from the
+	// proxy adapter's stashed context value. Swagger UI is the only
+	// route allowed through unauthenticated.
+	r.Use(middleware.CognitoAuth([]string{"/swagger/"}, nil))
 
 	anthropicKey := os.Getenv("ANTHROPIC_API_KEY")
 	mountQueries := opts.MountQueryRoutes && d.queriesReady
@@ -53,7 +52,7 @@ func BuildEngine(ctx context.Context, log logger.Logger, opts Options) (*gin.Eng
 
 	effectiveOpts := opts
 	effectiveOpts.MountQueryRoutes = mountQueries
-	registerRoutes(r, d.store, d.userStore, jwtSecret, anthropicKey, d.queries, effectiveOpts)
+	registerRoutes(r, d.store, anthropicKey, d.queries, effectiveOpts)
 
 	return r, cleanup, nil
 }

@@ -5,10 +5,6 @@ import (
 	swaggerFiles "github.com/swaggo/files"
 	ginSwagger "github.com/swaggo/gin-swagger"
 
-	"github.com/jordisalazar/money-management/internal/auth"
-	"github.com/jordisalazar/money-management/internal/auth/login"
-	"github.com/jordisalazar/money-management/internal/auth/register"
-
 	"github.com/jordisalazar/money-management/internal/payments/debt/getdebts"
 	dprojections "github.com/jordisalazar/money-management/internal/payments/debt/projections"
 	"github.com/jordisalazar/money-management/internal/payments/debt/recorddebt"
@@ -35,8 +31,8 @@ import (
 )
 
 // queryStores bundles the projection stores consumed by GET handlers
-// and by the voice slice. Lambda mode passes a zero value because the
-// projector Lambda doesn't ship until Phase 2 and no read models exist.
+// and by the voice slice. Lambda mode without AURORA_URL passes a zero
+// value (no read models served).
 type queryStores struct {
 	wallet    wprojections.WalletStore
 	movement  wprojections.MovementStore
@@ -47,15 +43,14 @@ type queryStores struct {
 func registerRoutes(
 	r *gin.Engine,
 	store eventstore.Store,
-	userStore auth.UserStorer,
-	jwtSecret string,
 	anthropicKey string,
 	queries queryStores,
 	opts Options,
 ) {
-	//Register commands
-	register.RegisterRoutes(r, userStore)
-	login.RegisterRoutes(r, userStore, jwtSecret)
+	// Auth slice (register + login) and the UserStorer are gone in
+	// phase 4: API Gateway's JWT authorizer validates Cognito tokens at
+	// the edge, the middleware reads the sub claim. No backend route
+	// owns user creation anymore — Cognito's hosted UI does.
 
 	addwallet.RegisterCommands(r, store)
 	depositmoney.RegisterCommands(r, store)
@@ -68,7 +63,6 @@ func registerRoutes(
 	stoprecurringmovement.RegisterCommands(r, store)
 
 	if opts.MountQueryRoutes {
-		//Register queries
 		getuserwallets.RegisterQueries(r, queries.wallet)
 		getwalletmovements.RegisterQueries(r, queries.movement)
 		getusermovements.RegisterQueries(r, queries.wallet, queries.movement)

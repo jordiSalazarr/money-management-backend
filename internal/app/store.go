@@ -7,7 +7,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/jordisalazar/money-management/internal/auth"
 	"github.com/jordisalazar/money-management/internal/payments/debt"
 	dprojections "github.com/jordisalazar/money-management/internal/payments/debt/projections"
 	"github.com/jordisalazar/money-management/internal/payments/recurringmovement"
@@ -21,18 +20,15 @@ import (
 )
 
 // deps bundles the per-mode infra that BuildEngine composes into a
-// gin.Engine. The shape is uniform across modes so engine.go doesn't have
-// to switch on StoreMode again — only the constructors do.
+// gin.Engine. Phase 4 dropped the userStore field — Cognito owns users
+// now; the backend only sees the validated sub claim from API GW.
 type deps struct {
-	mode      StoreMode
-	store     eventstore.Store
-	userStore auth.UserStorer
+	mode  StoreMode
+	store eventstore.Store
 
 	// queriesReady is true only when read-model projection stores were
-	// constructed alongside the event store. With the postgres event store
-	// gone (phase 2), that happens only in memory mode (sync projections
-	// in-process) or in dynamodb mode when AURORA_URL is set (handled by
-	// cmd/lambda directly, see internal/app/projector.go).
+	// constructed alongside the event store. Memory mode wires them in
+	// process; dynamodb mode wires them only when AURORA_URL is set.
 	queriesReady bool
 	queries      queryStores
 }
@@ -73,10 +69,6 @@ func buildDynamoDeps(ctx context.Context, log logger.Logger) (deps, func(), erro
 	if eventsTable == "" {
 		return deps{}, nil, fmt.Errorf("EVENTS_TABLE must be set when STORE=dynamodb")
 	}
-	usersTable := os.Getenv("USERS_TABLE")
-	if usersTable == "" {
-		return deps{}, nil, fmt.Errorf("USERS_TABLE must be set when STORE=dynamodb")
-	}
 
 	store, err := eventstore.NewDynamoStore(ctx, eventsTable)
 	if err != nil {
@@ -84,24 +76,17 @@ func buildDynamoDeps(ctx context.Context, log logger.Logger) (deps, func(), erro
 	}
 	registerDomainEvents(store)
 
-	userStore, err := auth.NewDynamoUserStore(ctx, usersTable)
-	if err != nil {
-		return deps{}, nil, fmt.Errorf("building dynamo user store: %w", err)
-	}
-
-	log.Info("dynamodb store wired", "events_table", eventsTable, "users_table", usersTable)
+	log.Info("dynamodb store wired", "events_table", eventsTable)
 
 	// AURORA_URL is optional. When set we additionally open a pgxpool and
 	// build the Postgres-backed projection stores so GET handlers can
-	// serve real data. When unset (phase 1 deploy, infra still being
-	// stood up), the lambda runs POST-only and GETs 404.
+	// serve real data. When unset, the lambda runs POST-only and GETs 404.
 	auroraURL := os.Getenv("AURORA_URL")
 	if auroraURL == "" {
 		log.Info("AURORA_URL unset — GET handlers stay off (post-only mode)")
 		return deps{
-			mode:      StoreModeDynamoDB,
-			store:     store,
-			userStore: userStore,
+			mode:  StoreModeDynamoDB,
+			store: store,
 		}, func() {}, nil
 	}
 
@@ -114,7 +99,6 @@ func buildDynamoDeps(ctx context.Context, log logger.Logger) (deps, func(), erro
 	return deps{
 		mode:         StoreModeDynamoDB,
 		store:        store,
-		userStore:    userStore,
 		queries:      buildAuroraQueryStores(pool),
 		queriesReady: true,
 	}, pool.Close, nil
@@ -142,7 +126,6 @@ func buildMemoryDeps(log logger.Logger) (deps, func(), error) {
 	return deps{
 		mode:         StoreModeMemory,
 		store:        store,
-		userStore:    auth.NewMemoryUserStore(),
 		queries:      q,
 		queriesReady: true,
 	}, func() {}, nil
