@@ -19,6 +19,7 @@ import (
 	"encoding/binary"
 	"fmt"
 	"io"
+	"log/slog"
 	"strings"
 
 	"github.com/aws/aws-sdk-go-v2/aws"
@@ -78,23 +79,39 @@ func (t *awsTranscribeBackend) Transcribe(ctx context.Context, wav []byte) (stri
 		sendErr <- pushAudio(ctx, stream, pcm)
 	}()
 
-	var b strings.Builder
+	// Two buckets:
+	//   finals    — IsPartial == false. Preferred.
+	//   partial   — the most recent IsPartial == true text per result-id.
+	// If the close-end-of-stream race lands such that Transcribe sends
+	// partials but no final before the stream tears down, we fall back
+	// to the latest partial instead of returning an empty string.
+	var finals strings.Builder
+	latestPartial := map[string]string{}
+	events, partials, finalCount := 0, 0, 0
+
 	for event := range stream.Events() {
+		events++
 		te, ok := event.(*tstypes.TranscriptResultStreamMemberTranscriptEvent)
 		if !ok {
 			continue
 		}
 		for _, r := range te.Value.Transcript.Results {
-			if r.IsPartial {
-				continue
-			}
 			if len(r.Alternatives) == 0 || r.Alternatives[0].Transcript == nil {
 				continue
 			}
-			if b.Len() > 0 {
-				b.WriteByte(' ')
+			text := *r.Alternatives[0].Transcript
+			id := aws.ToString(r.ResultId)
+			if r.IsPartial {
+				partials++
+				latestPartial[id] = text
+				continue
 			}
-			b.WriteString(*r.Alternatives[0].Transcript)
+			finalCount++
+			if finals.Len() > 0 {
+				finals.WriteByte(' ')
+			}
+			finals.WriteString(text)
+			delete(latestPartial, id) // final superseded the partial
 		}
 	}
 
@@ -104,7 +121,34 @@ func (t *awsTranscribeBackend) Transcribe(ctx context.Context, wav []byte) (stri
 	if err := stream.Err(); err != nil {
 		return "", fmt.Errorf("transcribe stream: %w", err)
 	}
-	return strings.TrimSpace(b.String()), nil
+
+	transcript := strings.TrimSpace(finals.String())
+	usedFallback := false
+	if transcript == "" && len(latestPartial) > 0 {
+		// No finals arrived. Concatenate the latest partial of each
+		// result-id. Map iteration order isn't stable but for short
+		// commands there's usually one result so order doesn't matter.
+		var pb strings.Builder
+		for _, v := range latestPartial {
+			if pb.Len() > 0 {
+				pb.WriteByte(' ')
+			}
+			pb.WriteString(v)
+		}
+		transcript = strings.TrimSpace(pb.String())
+		usedFallback = true
+	}
+
+	slog.Info("transcribe result",
+		"language", string(t.languageCode),
+		"pcm_bytes", len(pcm),
+		"events_total", events,
+		"partials_received", partials,
+		"finals_received", finalCount,
+		"used_partial_fallback", usedFallback,
+		"text", transcript,
+	)
+	return transcript, nil
 }
 
 // pushAudio streams PCM bytes to Transcribe and closes the input half
