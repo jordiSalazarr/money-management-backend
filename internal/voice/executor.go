@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/jordisalazar/money-management/internal/payments/debt/recorddebt"
@@ -130,6 +131,7 @@ type stopRecurringInput struct {
 func (e *Executor) createWallet(ctx context.Context, userID string, input json.RawMessage) *ExecuteResult {
 	var in createWalletInput
 	if err := json.Unmarshal(input, &in); err != nil {
+		slog.Error("voice: parse failed", "tool", "create_wallet", "err", err, "raw_input", string(input))
 		return &ExecuteResult{Message: "Failed to parse wallet details"}
 	}
 
@@ -160,6 +162,7 @@ func (e *Executor) createWallet(ctx context.Context, userID string, input json.R
 func (e *Executor) depositMoney(ctx context.Context, userID string, input json.RawMessage) *ExecuteResult {
 	var in depositMoneyInput
 	if err := json.Unmarshal(input, &in); err != nil {
+		slog.Error("voice: parse failed", "tool", "deposit_money", "err", err, "raw_input", string(input))
 		return &ExecuteResult{Message: "Failed to parse deposit details"}
 	}
 
@@ -206,6 +209,7 @@ func (e *Executor) depositMoney(ctx context.Context, userID string, input json.R
 func (e *Executor) withdrawMoney(ctx context.Context, userID string, input json.RawMessage) *ExecuteResult {
 	var in withdrawMoneyInput
 	if err := json.Unmarshal(input, &in); err != nil {
+		slog.Error("voice: parse failed", "tool", "withdraw_money", "err", err, "raw_input", string(input))
 		return &ExecuteResult{Message: "Failed to parse withdrawal details"}
 	}
 
@@ -251,6 +255,7 @@ func (e *Executor) withdrawMoney(ctx context.Context, userID string, input json.
 func (e *Executor) transferMoney(ctx context.Context, userID string, input json.RawMessage) *ExecuteResult {
 	var in transferMoneyInput
 	if err := json.Unmarshal(input, &in); err != nil {
+		slog.Error("voice: parse failed", "tool", "transfer_money", "err", err, "raw_input", string(input))
 		return &ExecuteResult{Message: "Failed to parse transfer details"}
 	}
 
@@ -310,6 +315,7 @@ func (e *Executor) transferMoney(ctx context.Context, userID string, input json.
 func (e *Executor) recordDebt(ctx context.Context, userID string, input json.RawMessage) *ExecuteResult {
 	var in recordDebtInput
 	if err := json.Unmarshal(input, &in); err != nil {
+		slog.Error("voice: parse failed", "tool", "record_debt", "err", err, "raw_input", string(input))
 		return &ExecuteResult{Message: "Failed to parse debt details"}
 	}
 
