@@ -151,9 +151,15 @@ func (t *awsTranscribeBackend) Transcribe(ctx context.Context, wav []byte) (stri
 	return transcript, nil
 }
 
-// pushAudio streams PCM bytes to Transcribe and closes the input half
-// so the service finalises results. Errors are returned but the caller
-// still drains stream.Events() to surface any service-side error.
+// pushAudio streams PCM bytes to Transcribe and closes only the input
+// half so the service knows there's no more audio coming but the
+// reader stays alive long enough to receive the final transcript.
+//
+// Calling stream.Close() here would be wrong: the SDK's safeClose
+// closes the writer (waiting at most 1s) and then immediately closes
+// the reader, which ends Events() before Transcribe has had time to
+// finalise and send the last TranscriptEvent. That manifested as
+// events_total=0 in the Lambda log.
 func pushAudio(ctx context.Context, stream *transcribestreaming.StartStreamTranscriptionEventStream, pcm []byte) error {
 	for off := 0; off < len(pcm); off += audioChunkBytes {
 		end := off + audioChunkBytes
@@ -169,7 +175,7 @@ func pushAudio(ctx context.Context, stream *transcribestreaming.StartStreamTrans
 			return err
 		}
 	}
-	return stream.Close()
+	return stream.Writer.Close()
 }
 
 // parseWAV walks RIFF/WAVE chunks and returns the PCM data plus the
