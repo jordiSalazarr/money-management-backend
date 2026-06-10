@@ -19,11 +19,13 @@ import (
 	bedrocktypes "github.com/aws/aws-sdk-go-v2/service/bedrockruntime/types"
 )
 
-// defaultBedrockModelID — Claude 3.5 Haiku via Bedrock. Cheap + fast +
-// good enough at tool use for the 8-tool surface. Override via
+// defaultBedrockModelID — EU cross-region inference profile for Claude
+// Haiku 4.5. eu-west-1 doesn't host Claude foundation models directly;
+// Anthropic models in EU are accessed via `eu.` inference profiles
+// which Bedrock routes across EU regions. Override via the
 // BEDROCK_MODEL_ID env var (read by internal/app/engine.go) or via
 // ClientOptions.BedrockModelID.
-const defaultBedrockModelID = "anthropic.claude-3-5-haiku-20241022-v1:0"
+const defaultBedrockModelID = "eu.anthropic.claude-haiku-4-5-20251001-v1:0"
 
 type bedrockBackend struct {
 	client  *bedrockruntime.Client
