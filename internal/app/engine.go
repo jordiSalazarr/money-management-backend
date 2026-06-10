@@ -46,10 +46,13 @@ func BuildEngine(ctx context.Context, log logger.Logger, opts Options) (*gin.Eng
 		BedrockModelID:  os.Getenv("BEDROCK_MODEL_ID"),
 		AnthropicAPIKey: os.Getenv("ANTHROPIC_API_KEY"),
 	}
+	transOpts := voice.TranscriberOptions{
+		LanguageCode: os.Getenv("TRANSCRIBE_LANGUAGE"),
+	}
 	mountVoice := mountQueries // voice depends on projection stores too
 	logVoiceDecision(log, mountQueries, voiceOpts)
 
-	registerRoutes(ctx, r, d.store, voiceOpts, mountVoice, d.queries, applyMountQueries(opts, mountQueries))
+	registerRoutes(ctx, r, d.store, voiceOpts, transOpts, mountVoice, d.queries, applyMountQueries(opts, mountQueries))
 
 	return r, cleanup, nil
 }

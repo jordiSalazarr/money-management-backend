@@ -49,6 +49,7 @@ func registerRoutes(
 	r *gin.Engine,
 	store eventstore.Store,
 	voiceOpts voice.ClientOptions,
+	transOpts voice.TranscriberOptions,
 	mountVoice bool,
 	queries queryStores,
 	opts Options,
@@ -78,7 +79,7 @@ func registerRoutes(
 		if mountVoice {
 			// Bedrock backend construction can fail (e.g. AWS config
 			// load). Don't fail the whole engine — log + skip mounting.
-			if err := voice.RegisterRoutes(ctx, r, store, voiceOpts, queries.wallet, queries.debt, queries.recurring); err != nil {
+			if err := voice.RegisterRoutes(ctx, r, store, voiceOpts, transOpts, queries.wallet, queries.debt, queries.recurring); err != nil {
 				// We can't log structured here without plumbing logger
 				// through; print to stderr is fine for a startup error.
 				fmt.Fprintf(os.Stderr, "voice: registration failed, slice disabled: %v\n", err)

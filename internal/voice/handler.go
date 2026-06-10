@@ -3,6 +3,7 @@ package voice
 import (
 	"context"
 	"fmt"
+	"io"
 	"log/slog"
 	"net/http"
 	"strings"
@@ -13,15 +14,21 @@ import (
 	"github.com/jordisalazar/money-management/internal/shared/middleware"
 )
 
+// maxAudioBytes caps the multipart upload to /voice/audio. 60s of
+// 16 kHz mono 16-bit PCM packaged as WAV is ~1.9 MB; 4 MB leaves
+// headroom and stays well under API Gateway's 10 MB request limit.
+const maxAudioBytes = 4 << 20
+
 // Handler handles voice command HTTP requests.
 type Handler struct {
-	client   Backend
-	executor *Executor
-	resolver *Resolver
+	client      Backend
+	transcriber Transcriber
+	executor    *Executor
+	resolver    *Resolver
 }
 
-func NewHandler(client Backend, executor *Executor, resolver *Resolver) *Handler {
-	return &Handler{client: client, executor: executor, resolver: resolver}
+func NewHandler(client Backend, transcriber Transcriber, executor *Executor, resolver *Resolver) *Handler {
+	return &Handler{client: client, transcriber: transcriber, executor: executor, resolver: resolver}
 }
 
 type voiceRequest struct {
@@ -29,14 +36,15 @@ type voiceRequest struct {
 }
 
 type voiceResponse struct {
-	Status  string   `json:"status"`
-	Message string   `json:"message"`
-	Options []string `json:"options,omitempty"`
+	Status     string   `json:"status"`
+	Message    string   `json:"message"`
+	Options    []string `json:"options,omitempty"`
+	Transcript string   `json:"transcript,omitempty"`
 }
 
-// HandleVoiceCommand processes a voice command.
-// @Summary Process a voice command
-// @Description Interprets natural language and executes the corresponding action
+// HandleVoiceCommand processes a typed voice command.
+// @Summary Process a typed voice command
+// @Description Interprets natural-language text and executes the corresponding action. Used by the typed-input path; the speech path posts audio to /voice/audio instead.
 // @Tags voice
 // @Accept json
 // @Produce json
@@ -73,57 +81,136 @@ func (h *Handler) HandleVoiceCommand(c *gin.Context) {
 		return
 	}
 
-	slog.Info("voice command received", "user_id", userID, "text", req.Text)
+	h.runCommand(c, userID, req.Text)
+}
 
-	// Step 1: Build user context (wallet list, debts, etc.) for Claude.
-	userContext := h.buildUserContext(c.Request.Context(), userID)
-
-	// Step 2: Send to Claude for interpretation.
-	tools := AllTools()
-	result, err := h.client.Interpret(c.Request.Context(), req.Text, tools, userContext)
-	if err != nil {
-		slog.Error("claude interpretation failed", "error", err)
-		c.JSON(http.StatusInternalServerError, voiceResponse{
+// HandleVoiceAudio transcribes an uploaded audio clip then runs the
+// same interpret+execute pipeline as the typed endpoint.
+// @Summary Process a spoken voice command
+// @Description Accepts a WAV (PCM 16-bit mono) clip, transcribes it via AWS Transcribe, then interprets and executes the command.
+// @Tags voice
+// @Accept multipart/form-data
+// @Produce json
+// @Param audio formData file true "WAV audio (PCM 16-bit mono)"
+// @Success 200 {object} voiceResponse
+// @Failure 400 {object} voiceResponse
+// @Failure 401 {object} voiceResponse
+// @Failure 500 {object} voiceResponse
+// @Security BearerAuth
+// @Router /voice/audio [post]
+func (h *Handler) HandleVoiceAudio(c *gin.Context) {
+	userID := middleware.GetUserID(c.Request.Context())
+	if userID == "" {
+		c.JSON(http.StatusUnauthorized, voiceResponse{
 			Status:  "error",
-			Message: "Failed to interpret command. Please try again.",
+			Message: "Unauthorized",
 		})
 		return
 	}
 
-	// Step 3: If Claude returned text instead of a tool call, it couldn't understand.
-	if result.Text != "" {
+	// Cap the body before reading anything so a misbehaving client
+	// can't blow up Lambda memory.
+	c.Request.Body = http.MaxBytesReader(c.Writer, c.Request.Body, maxAudioBytes)
+
+	file, _, err := c.Request.FormFile("audio")
+	if err != nil {
+		c.JSON(http.StatusBadRequest, voiceResponse{
+			Status:  "error",
+			Message: "Missing 'audio' file in form data",
+		})
+		return
+	}
+	defer file.Close()
+
+	audio, err := io.ReadAll(file)
+	if err != nil {
+		c.JSON(http.StatusBadRequest, voiceResponse{
+			Status:  "error",
+			Message: "Audio upload too large or unreadable",
+		})
+		return
+	}
+
+	slog.Info("voice audio received", "user_id", userID, "bytes", len(audio))
+
+	text, err := h.transcriber.Transcribe(c.Request.Context(), audio)
+	if err != nil {
+		slog.Error("transcription failed", "error", err, "user_id", userID)
+		c.JSON(http.StatusInternalServerError, voiceResponse{
+			Status:  "error",
+			Message: "Failed to transcribe audio. Please try again.",
+		})
+		return
+	}
+	if text == "" {
 		c.JSON(http.StatusOK, voiceResponse{
 			Status:  "error",
-			Message: result.Text,
+			Message: "Could not hear anything. Try speaking closer to the mic.",
+		})
+		return
+	}
+
+	slog.Info("voice audio transcribed", "user_id", userID, "text", text)
+	h.runCommand(c, userID, text)
+}
+
+// runCommand is the shared tail of both endpoints: turn natural-
+// language text into a tool call, execute it, write the response.
+// transcript is echoed back so the UI can show what the user actually
+// said — useful when Transcribe mishears.
+func (h *Handler) runCommand(c *gin.Context, userID, text string) {
+	slog.Info("voice command received", "user_id", userID, "text", text)
+
+	userContext := h.buildUserContext(c.Request.Context(), userID)
+
+	tools := AllTools()
+	result, err := h.client.Interpret(c.Request.Context(), text, tools, userContext)
+	if err != nil {
+		slog.Error("claude interpretation failed", "error", err)
+		c.JSON(http.StatusInternalServerError, voiceResponse{
+			Status:     "error",
+			Message:    "Failed to interpret command. Please try again.",
+			Transcript: text,
+		})
+		return
+	}
+
+	if result.Text != "" {
+		c.JSON(http.StatusOK, voiceResponse{
+			Status:     "error",
+			Message:    result.Text,
+			Transcript: text,
 		})
 		return
 	}
 
 	slog.Info("voice command interpreted", "user_id", userID, "tool", result.ToolName)
 
-	// Step 4: Execute the command.
 	execResult := h.executor.Execute(c.Request.Context(), userID, result.ToolName, result.ToolInput)
 
 	if execResult.NeedsClarify {
 		c.JSON(http.StatusOK, voiceResponse{
-			Status:  "clarification_needed",
-			Message: execResult.ClarifyPrompt,
-			Options: execResult.Options,
+			Status:     "clarification_needed",
+			Message:    execResult.ClarifyPrompt,
+			Options:    execResult.Options,
+			Transcript: text,
 		})
 		return
 	}
 
 	if !execResult.Success {
 		c.JSON(http.StatusOK, voiceResponse{
-			Status:  "error",
-			Message: execResult.Message,
+			Status:     "error",
+			Message:    execResult.Message,
+			Transcript: text,
 		})
 		return
 	}
 
 	c.JSON(http.StatusOK, voiceResponse{
-		Status:  "success",
-		Message: execResult.Message,
+		Status:     "success",
+		Message:    execResult.Message,
+		Transcript: text,
 	})
 }
 
