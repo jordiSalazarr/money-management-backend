@@ -128,14 +128,20 @@ func buildBedrockToolConfig(tools []Tool) (*bedrocktypes.ToolConfiguration, erro
 	return &bedrocktypes.ToolConfiguration{Tools: bt}, nil
 }
 
-// marshalToolInput turns Bedrock's document.Interface (an opaque
-// any-shaped JSON value) into json.RawMessage so the rest of the voice
-// slice — which was built against the Anthropic shape — can pass it
-// through unchanged.
+// marshalToolInput returns the original JSON bytes Bedrock received
+// from Claude.
+//
+// The naive round-trip — UnmarshalSmithyDocument into `any`, then
+// json.Marshal — corrupts numeric fields: smithy stores numbers as
+// json.Number internally, which json.Marshal then serialises as
+// quoted strings ("200" instead of 200). The executor's strongly-typed
+// input structs (e.g. createWalletInput.InitialAmount int) fail to
+// unmarshal those quoted values, producing "Failed to parse … details"
+// errors on every tool call.
+//
+// MarshalSmithyDocument returns the original wire bytes, so the
+// executor gets exactly what Claude sent — no precision loss, no
+// quoting surprises.
 func marshalToolInput(doc document.Interface) (json.RawMessage, error) {
-	var v any
-	if err := doc.UnmarshalSmithyDocument(&v); err != nil {
-		return nil, err
-	}
-	return json.Marshal(v)
+	return doc.MarshalSmithyDocument()
 }
