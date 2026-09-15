@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jordisalazar/money-management/internal/payments/transaction"
-	"github.com/jordisalazar/money-management/internal/payments/wallet"
+	"github.com/jordisalazar/money-management/internal/payments/transaction/domain"
+	"github.com/jordisalazar/money-management/internal/payments/wallet/domain"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 )
 

@@ -12,9 +12,9 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	"github.com/jordisalazar/money-management/internal/payments/debt"
-	"github.com/jordisalazar/money-management/internal/payments/recurringmovement"
-	"github.com/jordisalazar/money-management/internal/payments/wallet"
+	"github.com/jordisalazar/money-management/internal/payments/debt/domain"
+	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/domain"
+	"github.com/jordisalazar/money-management/internal/payments/wallet/domain"
 	"github.com/jordisalazar/money-management/internal/reactor"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 )

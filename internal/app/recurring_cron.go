@@ -10,8 +10,8 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/jordisalazar/money-management/internal/payments/recurringmovement"
-	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/executerecurringmovement"
+	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/domain"
+	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/slices/executerecurringmovement"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 	"github.com/jordisalazar/money-management/pkg/logger"
 )

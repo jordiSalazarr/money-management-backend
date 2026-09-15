@@ -7,15 +7,15 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jordisalazar/money-management/internal/payments/debt/recorddebt"
-	"github.com/jordisalazar/money-management/internal/payments/debt/settledebt"
-	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/recordrecurringmovement"
-	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/stoprecurringmovement"
-	"github.com/jordisalazar/money-management/internal/payments/transaction/transfermoney"
-	"github.com/jordisalazar/money-management/internal/payments/wallet/addwallet"
-	"github.com/jordisalazar/money-management/internal/payments/wallet/depositmoney"
+	"github.com/jordisalazar/money-management/internal/payments/debt/slices/recorddebt"
+	"github.com/jordisalazar/money-management/internal/payments/debt/slices/settledebt"
+	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/slices/recordrecurringmovement"
+	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/slices/stoprecurringmovement"
+	"github.com/jordisalazar/money-management/internal/payments/transaction/slices/transfermoney"
+	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/addwallet"
+	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/depositmoney"
 	walletservices "github.com/jordisalazar/money-management/internal/payments/wallet/services"
-	"github.com/jordisalazar/money-management/internal/payments/wallet/withdrawmoney"
+	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/withdrawmoney"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 )
 

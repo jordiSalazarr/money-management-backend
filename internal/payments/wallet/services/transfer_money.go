@@ -3,7 +3,7 @@ package walletservices
 import (
 	"time"
 
-	"github.com/jordisalazar/money-management/internal/payments/wallet"
+	"github.com/jordisalazar/money-management/internal/payments/wallet/domain"
 )
 
 type TransferMoneyCommand struct {

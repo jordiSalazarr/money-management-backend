@@ -4,6 +4,7 @@
 *.so
 *.dylib
 /server
+/devtools
 
 # Test
 *.test

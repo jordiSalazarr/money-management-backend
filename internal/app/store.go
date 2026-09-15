@@ -7,13 +7,13 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/jordisalazar/money-management/internal/payments/debt"
+	"github.com/jordisalazar/money-management/internal/payments/debt/domain"
 	dprojections "github.com/jordisalazar/money-management/internal/payments/debt/projections"
-	"github.com/jordisalazar/money-management/internal/payments/recurringmovement"
+	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/domain"
 	rmprojections "github.com/jordisalazar/money-management/internal/payments/recurringmovement/projections"
-	"github.com/jordisalazar/money-management/internal/payments/transaction"
+	"github.com/jordisalazar/money-management/internal/payments/transaction/domain"
 	txprojections "github.com/jordisalazar/money-management/internal/payments/transaction/projections"
-	"github.com/jordisalazar/money-management/internal/payments/wallet"
+	"github.com/jordisalazar/money-management/internal/payments/wallet/domain"
 	wprojections "github.com/jordisalazar/money-management/internal/payments/wallet/projections"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 	"github.com/jordisalazar/money-management/pkg/logger"

@@ -18,11 +18,11 @@ import (
 
 	"github.com/aws/aws-lambda-go/events"
 
-	"github.com/jordisalazar/money-management/internal/payments/debt"
-	"github.com/jordisalazar/money-management/internal/payments/debt/settledebt"
-	"github.com/jordisalazar/money-management/internal/payments/recurringmovement"
-	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/executerecurringmovement"
-	"github.com/jordisalazar/money-management/internal/payments/wallet"
+	"github.com/jordisalazar/money-management/internal/payments/debt/domain"
+	"github.com/jordisalazar/money-management/internal/payments/debt/slices/settledebt"
+	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/domain"
+	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/slices/executerecurringmovement"
+	"github.com/jordisalazar/money-management/internal/payments/wallet/domain"
 	"github.com/jordisalazar/money-management/internal/projector/kinesisdecode"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 )

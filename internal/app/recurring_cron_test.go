@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/jordisalazar/money-management/internal/payments/recurringmovement"
+	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/domain"
 )
 
 type fakeSource struct {

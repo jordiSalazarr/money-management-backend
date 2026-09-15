@@ -1,9 +1,10 @@
-.PHONY: help test test-ddb build run build-lambda build-projector build-migrate build-reactor build-recurring-cron build-all-lambdas localstack-up localstack-down dev-dynamodb create-local-tables
+.PHONY: help test test-ddb build run build-lambda build-projector build-migrate build-reactor build-recurring-cron build-all-lambdas localstack-up localstack-down dev-dynamodb dev-stack postgres-up postgres-down dev-migrate dev-reset dev-seed create-local-tables
 
 LOCALSTACK_ENDPOINT ?= http://localhost:4566
 AWS_REGION          ?= eu-west-1
 EVENTS_TABLE        ?= mm-events-dev
 USERS_TABLE         ?= mm-users-dev
+AURORA_URL          ?= postgres://money:money@localhost:5432/money_management?sslmode=disable
 
 # Static creds keep the AWS CLI happy when talking to LocalStack — it
 # rejects calls with no creds at all even though it doesn't validate them.
@@ -82,3 +83,32 @@ create-local-tables: ## Create mm-events-dev + mm-users-dev tables in LocalStack
 dev-dynamodb: localstack-up create-local-tables ## Run cmd/server against LocalStack DDB
 	STORE=dynamodb EVENTS_TABLE=$(EVENTS_TABLE) USERS_TABLE=$(USERS_TABLE) $(LS_AWS_ENV) \
 		go run ./cmd/server
+
+postgres-up: ## Start the Postgres container (idempotent)
+	docker compose up -d postgres
+	@until docker compose exec -T postgres pg_isready -U money -d money_management >/dev/null 2>&1; do \
+		echo "waiting for postgres..."; sleep 1; \
+	done
+	@echo "postgres ready at localhost:5432"
+
+postgres-down: ## Stop the Postgres container
+	docker compose stop postgres
+
+dev-migrate: postgres-up ## Apply any unapplied Postgres migrations (idempotent)
+	AURORA_URL=$(AURORA_URL) go run ./cmd/devtools migrate
+
+dev-stack: localstack-up create-local-tables postgres-up dev-migrate ## Run cmd/server with DDB + Aurora + in-process async pipeline
+	STORE=dynamodb \
+	EVENTS_TABLE=$(EVENTS_TABLE) \
+	USERS_TABLE=$(USERS_TABLE) \
+	AURORA_URL=$(AURORA_URL) \
+	RUN_ASYNC=true \
+	$(LS_AWS_ENV) \
+		go run ./cmd/server
+
+dev-reset: localstack-up postgres-up ## Wipe DDB events + projection tables, then re-run migrations
+	EVENTS_TABLE=$(EVENTS_TABLE) AURORA_URL=$(AURORA_URL) $(LS_AWS_ENV) \
+		go run ./cmd/devtools reset
+
+dev-seed: ## Populate a running dev-stack with a small set of wallets + movements
+	go run ./cmd/devtools seed

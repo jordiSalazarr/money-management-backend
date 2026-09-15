@@ -6,8 +6,8 @@ import (
 	"log/slog"
 	"os"
 
-	"github.com/jordisalazar/money-management/internal/payments/debt/settledebt"
-	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/executerecurringmovement"
+	"github.com/jordisalazar/money-management/internal/payments/debt/slices/settledebt"
+	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/slices/executerecurringmovement"
 	"github.com/jordisalazar/money-management/internal/reactor"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 	"github.com/jordisalazar/money-management/pkg/logger"

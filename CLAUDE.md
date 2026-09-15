@@ -15,30 +15,37 @@ Each feature is a self-contained slice. A slice owns everything it needs — no 
 
 ### Aggregates vs Slices
 
-**Aggregates** hold domain state, events, and invariants. They live in their own package (e.g., `wallet/`).
+**Aggregates** hold domain state, events, and invariants. They live in the bounded context's `domain/` package (e.g., `payments/wallet/domain/`, package name `wallet`).
 
-**Slices** are organized per command/use case (e.g., `createwallet/`, `depositwallet/`). Each slice owns its command, handler, errors, and registration. Slices import the aggregate they operate on.
+**Slices** are organized per command/use case (e.g., `addwallet/`, `depositmoney/`) and live under the context's `slices/` folder. Each slice owns its command, handler, errors, and registration. Slices import the aggregate they operate on.
 
 ### Folder structure
 
 ```
 backend/
-  wallet/                     # aggregate package
-    aggregate.go              # aggregate root + Apply()
-    aggregate_test.go         # Given/When/Then table-driven tests
-    events.go                 # domain events (WalletAdded, MoneyDeposited, etc.)
-    addwallet/                # slice (command/use case), nested under aggregate
-      command.go              # command definition
-      command_handler.go      # command handling + orchestration
-      errors.go               # sentinel domain errors for this use case
-      handler.go              # HTTP handler (REST endpoint)
-      handler_test.go         # HTTP contract tests (in-memory event store)
-      projection.go           # read model struct
-      register.go             # RegisterCommands()
-    depositwallet/
-      ...same structure...
-    withdrawwallet/
-      ...same structure...
+  internal/payments/
+    wallet/                     # bounded context
+      domain/                   # aggregate package (package wallet)
+        aggregate.go            # aggregate root + Apply()
+        aggregate_test.go       # Given/When/Then table-driven tests
+        errors.go               # sentinel domain errors
+        events.go               # domain events (WalletAdded, MoneyDeposited, etc.)
+      projections/              # read models + their stores (memory + postgres)
+        wallets_projection.go
+        wallets_memory_store.go
+        wallets_postgres_store.go
+      slices/
+        addwallet/              # slice (command/use case)
+          command.go            # command definition
+          command_handler.go    # command handling + orchestration
+          errors.go             # sentinel domain errors for this use case
+          handler.go            # HTTP handler (REST endpoint)
+          handler_test.go       # HTTP contract tests (in-memory event store)
+          register.go           # RegisterCommands()
+        depositmoney/
+          ...same structure...
+        withdrawmoney/
+          ...same structure...
   specs/
     wallet.md                 # event model spec (markdown, normalized to YAML by skill)
     transfer.md
