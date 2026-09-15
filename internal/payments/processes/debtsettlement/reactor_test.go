@@ -90,12 +90,15 @@ func (f *fixture) drive(t *testing.T) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	head := f.store.Head()
+	head, err := f.store.Head(ctx)
+	if err != nil {
+		t.Fatalf("reading the log head: %v", err)
+	}
 	if head == eventstore.Start {
 		return
 	}
 	var batch []eventstore.Recorded
-	err := f.store.SubscribeAll(ctx, eventstore.Start, func(r eventstore.Recorded) error {
+	err = f.store.SubscribeAll(ctx, eventstore.Start, func(r eventstore.Recorded) error {
 		batch = append(batch, r)
 		if r.Position == head {
 			return errCaughtUp

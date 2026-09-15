@@ -11,6 +11,7 @@ import (
 	"github.com/jordisalazar/money-management/internal/payments/eventcatalog"
 	pprojections "github.com/jordisalazar/money-management/internal/payments/processes/projections"
 	rmprojections "github.com/jordisalazar/money-management/internal/payments/recurringmovement/projections"
+	"github.com/jordisalazar/money-management/internal/payments/streams"
 	wprojections "github.com/jordisalazar/money-management/internal/payments/wallet/projections"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 	"github.com/jordisalazar/money-management/pkg/logger"
@@ -46,10 +47,10 @@ func resolveStoreMode(opts Options) (StoreMode, error) {
 		return opts.DefaultStore, nil
 	}
 	switch StoreMode(raw) {
-	case StoreModeDynamoDB, StoreModeMemory:
+	case StoreModeDynamoDB, StoreModeMemory, StoreModeKurrentDB:
 		return StoreMode(raw), nil
 	default:
-		return "", fmt.Errorf("unknown STORE=%q (want dynamodb|memory)", raw)
+		return "", fmt.Errorf("unknown STORE=%q (want kurrentdb|memory|dynamodb)", raw)
 	}
 }
 
@@ -59,6 +60,8 @@ func buildDeps(ctx context.Context, log logger.Logger, mode StoreMode) (deps, fu
 	switch mode {
 	case StoreModeDynamoDB:
 		return buildDynamoDeps(ctx, log)
+	case StoreModeKurrentDB:
+		return buildKurrentDeps(ctx, log)
 	case StoreModeMemory:
 		return buildMemoryDeps(log)
 	default:
@@ -108,17 +111,69 @@ func buildDynamoDeps(ctx context.Context, log logger.Logger) (deps, func(), erro
 	}, pool.Close, nil
 }
 
-func buildMemoryDeps(log logger.Logger) (deps, func(), error) {
-	store := eventstore.NewMemoryStore()
-	codec := eventcatalog.NewCodec()
+// buildKurrentDeps wires the real event store. Projections go to Postgres when
+// AURORA_URL is set and to memory otherwise, so the stack is usable with just
+// the one container running.
+func buildKurrentDeps(ctx context.Context, log logger.Logger) (deps, func(), error) {
+	url := os.Getenv("KURRENTDB_URL")
+	if url == "" {
+		return deps{}, nil, fmt.Errorf("KURRENTDB_URL must be set when STORE=kurrentdb")
+	}
 
-	q := queryStores{
+	store, err := eventstore.NewKurrentStore(url, streams.All()...)
+	if err != nil {
+		return deps{}, nil, fmt.Errorf("building kurrentdb event store: %w", err)
+	}
+	codec := eventcatalog.NewCodec()
+	log.Info("kurrentdb store wired", "url", sanitiseDSN(url))
+
+	postgresURL := os.Getenv("AURORA_URL")
+	if postgresURL == "" {
+		log.Info("AURORA_URL unset — read models are in memory and die with the process")
+		return deps{
+			mode:         StoreModeKurrentDB,
+			store:        store,
+			feed:         store,
+			codec:        codec,
+			queries:      newMemoryQueryStores(),
+			queriesReady: true,
+		}, func() { _ = store.Close() }, nil
+	}
+
+	pool, err := pgxpool.New(ctx, postgresURL)
+	if err != nil {
+		_ = store.Close()
+		return deps{}, nil, fmt.Errorf("connecting to postgres: %w", err)
+	}
+	log.Info("postgres projection stores wired", "host_sanitised", sanitiseDSN(postgresURL))
+
+	return deps{
+		mode:         StoreModeKurrentDB,
+		store:        store,
+		feed:         store,
+		codec:        codec,
+		queries:      buildAuroraQueryStores(pool),
+		queriesReady: true,
+	}, func() { pool.Close(); _ = store.Close() }, nil
+}
+
+// newMemoryQueryStores is the one list of in-memory read models, shared by
+// memory mode and by KurrentDB without Postgres.
+func newMemoryQueryStores() queryStores {
+	return queryStores{
 		wallet:    wprojections.NewMemoryWalletStore(),
 		movement:  wprojections.NewMemoryMovementStore(),
 		debt:      dprojections.NewMemoryDebtStore(),
 		recurring: rmprojections.NewMemoryRecurringMovementStore(),
 		processes: pprojections.NewMemoryProcessStore(),
 	}
+}
+
+func buildMemoryDeps(log logger.Logger) (deps, func(), error) {
+	store := eventstore.NewMemoryStore()
+	codec := eventcatalog.NewCodec()
+
+	q := newMemoryQueryStores()
 
 	// Projections are no longer fanned out by the store itself. The memory
 	// store has a real global log now, so the same subscription the deployed

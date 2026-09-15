@@ -119,12 +119,15 @@ func (f *fixture) drive(t *testing.T) {
 	// Snapshot first: handling events appends more, and we only want one pass.
 	// Stopping at the head is what makes this a catch-up read rather than a
 	// live subscription that would sit there until the deadline.
-	head := f.store.Head()
+	head, err := f.store.Head(ctx)
+	if err != nil {
+		t.Fatalf("reading the log head: %v", err)
+	}
 	if head == eventstore.Start {
 		return
 	}
 	var batch []eventstore.Recorded
-	err := f.store.SubscribeAll(ctx, eventstore.Start, func(r eventstore.Recorded) error {
+	err = f.store.SubscribeAll(ctx, eventstore.Start, func(r eventstore.Recorded) error {
 		batch = append(batch, r)
 		if r.Position == head {
 			return errCaughtUp

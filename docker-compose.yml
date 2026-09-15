@@ -16,21 +16,29 @@ services:
       timeout: 3s
       retries: 5
 
-  localstack:
-    image: localstack/localstack:3
-    container_name: money-management-localstack
+
+  kurrentdb:
+    image: docker.kurrent.io/kurrent-latest/kurrentdb:latest
+    container_name: money-management-kurrentdb
     environment:
-      SERVICES: dynamodb
-      DEFAULT_REGION: eu-west-1
-      AWS_DEFAULT_REGION: eu-west-1
+      # Single node, insecure, no clustering. Clustering and TLS are a separate
+      # exercise — see "Deferred" in docs/k8s-migration-plan.md.
+      KURRENTDB_CLUSTER_SIZE: 1
+      KURRENTDB_RUN_PROJECTIONS: All
+      KURRENTDB_START_STANDARD_PROJECTIONS: "true"
+      KURRENTDB_INSECURE: "true"
+      KURRENTDB_ENABLE_ATOM_PUB_OVER_HTTP: "true"
     ports:
-      - "4566:4566"
+      - "2113:2113"
+    volumes:
+      - kurrentdata:/var/lib/kurrentdb
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:4566/_localstack/health || exit 1"]
+      test: ["CMD-SHELL", "curl -fsS http://localhost:2113/health/live || exit 1"]
       interval: 5s
       timeout: 3s
-      retries: 10
+      retries: 20
       start_period: 10s
 
 volumes:
   pgdata:
+  kurrentdata:

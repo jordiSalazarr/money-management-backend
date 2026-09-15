@@ -5,7 +5,7 @@ Go API server for personal money management. Event Sourcing + DDD + Vertical Sli
 ## Tech
 
 - Go (latest stable)
-- KurrentDB (event store, phase 2) / in-memory (phase 1) — PostgreSQL for projections
+- KurrentDB (event store) or in-memory for tests — PostgreSQL for projections
 - REST API with JSON (snake_case fields always)
 - All money amounts are integer cents — never use float for money
 
@@ -83,7 +83,7 @@ backend/
       upcast.go               # Typed[From,To] adapter
       errors.go               # ErrConcurrencyConflict, ErrAggregateNotFound
       memory.go               # streams + global ordered log; satisfies both ports
-      kurrent.go              # KurrentDB implementation (phase 2)
+      kurrent.go              # KurrentDB implementation
     middleware/
       correlation.go          # generates UUID correlation_id, injects into context
       logging.go              # logs method, path, status, duration via logger interface
@@ -170,6 +170,7 @@ Two ports, in `shared/eventstore/store.go`:
 - Revisions are **0-based**; `NoStream` (-1) asserts a stream does not exist yet.
 - Appending at `NoStream` to a deterministically-named stream is how occurrences dedupe: **the stream name is the idempotency key**, so there is no dedup table.
 - There is no `AppendMulti`. Nothing writes two aggregates at once — that is what processes are for.
+- **`SubscribeAll` is filtered to `streams.All()`.** `$all` is the whole database; the codec treats an unknown type as a fault, so an unfiltered subscription would stop the entire read side the first time it met a foreign event. Add a category to `payments/streams` and you must add it to `All()`, or its events are never projected.
 
 ### Cross-aggregate processes
 
@@ -243,7 +244,8 @@ Miro (visual event model) → `specs/<slice>.md` (markdown) → skill normalizes
 ## Commands
 
 ```bash
-go test ./...          # run all tests
+go test ./...          # run all tests (memory store)
+make test-kurrent      # contract + saga tests against a real KurrentDB container
 go test ./internal/payments/eventcatalog -update   # regenerate event fixtures after a version bump
 go vet ./...           # vet code
 go build ./...         # verify compilation

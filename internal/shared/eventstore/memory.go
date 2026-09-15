@@ -126,8 +126,9 @@ func (s *MemoryStore) Close() {
 }
 
 var (
-	_ Store = (*MemoryStore)(nil)
-	_ Feed  = (*MemoryStore)(nil)
+	_ Store  = (*MemoryStore)(nil)
+	_ Feed   = (*MemoryStore)(nil)
+	_ Headed = (*MemoryStore)(nil)
 )
 
 // Head returns the position of the last event in the global log, or Start when
@@ -136,11 +137,11 @@ var (
 // A catch-up subscriber uses it to tell "I have read everything that existed
 // when I started" from "I am now waiting for new events", which is also what
 // the projector's lag metric is: head minus the stored checkpoint.
-func (s *MemoryStore) Head() Position {
+func (s *MemoryStore) Head(_ context.Context) (Position, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if len(s.log) == 0 {
-		return Start
+		return Start, nil
 	}
-	return s.log[len(s.log)-1].Position
+	return s.log[len(s.log)-1].Position, nil
 }

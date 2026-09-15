@@ -91,6 +91,16 @@ type Feed interface {
 	SubscribeAll(ctx context.Context, from Position, handler func(Recorded) error) error
 }
 
+// Headed is implemented by stores that can report where the end of the global
+// log is.
+//
+// Lag — head minus a stored checkpoint — is the only meaningful thing a
+// projector's liveness probe can report, and a catch-up reader needs it to
+// tell "caught up" from "waiting".
+type Headed interface {
+	Head(ctx context.Context) (Position, error)
+}
+
 // EventMetadata is the envelope-level context a projection needs: EventID for
 // deterministic row IDs, and position/stream for lag and provenance.
 //

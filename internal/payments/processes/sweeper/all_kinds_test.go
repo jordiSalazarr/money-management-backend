@@ -53,7 +53,10 @@ func (f *allKinds) project(t *testing.T) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	head := f.store.Head()
+	head, err := f.store.Head(ctx)
+	if err != nil {
+		t.Fatalf("reading the log head: %v", err)
+	}
 	if head == eventstore.Start {
 		return
 	}

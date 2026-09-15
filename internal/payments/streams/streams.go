@@ -68,3 +68,19 @@ func Occurrence(recurringMovementID string, forDate time.Time) eventstore.Stream
 func OccurrenceByID(occurrenceID string) eventstore.StreamID {
 	return eventstore.StreamID{Category: CategoryOccurrence, ID: occurrenceID}
 }
+
+// All is every stream category this application owns.
+//
+// It scopes the $all subscription: a consumer reading the global log must only
+// be handed events from streams it understands, because the codec treats an
+// unrecognised type inside our own categories as a fault. Add a category here
+// when you add one above, or its events will never be projected.
+func All() []string {
+	return []string{
+		CategoryWallet,
+		CategoryDebt,
+		CategoryRecurring,
+		CategoryTransfer,
+		CategoryOccurrence,
+	}
+}

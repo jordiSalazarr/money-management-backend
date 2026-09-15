@@ -1,6 +1,8 @@
-.PHONY: help test test-ddb build run build-lambda build-projector build-migrate build-reactor build-recurring-cron build-all-lambdas localstack-up localstack-down dev-dynamodb dev-stack postgres-up postgres-down dev-migrate dev-reset dev-seed create-local-tables
+.PHONY: help test test-ddb test-kurrent kurrentdb-up kurrentdb-down dev-kurrent build run build-lambda build-projector build-migrate build-reactor build-recurring-cron build-all-lambdas localstack-up localstack-down dev-dynamodb dev-stack postgres-up postgres-down dev-migrate dev-reset dev-seed create-local-tables
 
 LOCALSTACK_ENDPOINT ?= http://localhost:4566
+KURRENTDB_URL       ?= kurrentdb://localhost:2113?tls=false
+KURRENTDB_HTTP      ?= http://localhost:2113
 AWS_REGION          ?= eu-west-1
 EVENTS_TABLE        ?= mm-events-dev
 USERS_TABLE         ?= mm-users-dev
@@ -97,28 +99,31 @@ postgres-down: ## Stop the Postgres container
 dev-migrate: postgres-up ## Apply any unapplied Postgres migrations (idempotent)
 	AURORA_URL=$(AURORA_URL) go run ./cmd/devtools migrate
 
-# NOTE: dev-stack is parked until phase 2.
-#
-# It ran cmd/server against DynamoDB with the in-process async pipeline. That
-# pipeline is now a real subscription to the store's global log, and DynamoDB
-# has no global log — its read side was a Kinesis export. So the projector, the
-# process reactors, the cron and the sweeper cannot start against it, and the
-# stack would serve empty read models with no transfer ever completing.
-#
-# `make run` is the full local experience in the meantime: in-memory store with
-# every one of those pieces running. dev-stack comes back in phase 2 pointed at
-# KurrentDB, when there is a real log to subscribe to.
-dev-stack: ## (parked until phase 2 — use `make run`) DDB + Aurora + async pipeline
-	@echo "dev-stack is parked until the KurrentDB adapter lands in phase 2."
-	@echo "DynamoDB has no global log, so the projector and reactors cannot subscribe to it."
-	@echo ""
-	@echo "Use 'make run' instead: in-memory store with the projector, the three"
-	@echo "process reactors, the recurring cron and the sweeper all running in process."
-	@exit 1
+kurrentdb-up: ## Start the KurrentDB container (idempotent)
+	docker compose up -d kurrentdb
+	@until curl -fsS $(KURRENTDB_HTTP)/health/live >/dev/null 2>&1; do \
+		echo "waiting for kurrentdb..."; sleep 1; \
+	done
+	@echo "kurrentdb ready at $(KURRENTDB_HTTP) (ui: $(KURRENTDB_HTTP))"
 
-dev-reset: localstack-up postgres-up ## Wipe DDB events + projection tables, then re-run migrations
-	EVENTS_TABLE=$(EVENTS_TABLE) AURORA_URL=$(AURORA_URL) $(LS_AWS_ENV) \
-		go run ./cmd/devtools reset
+kurrentdb-down: ## Stop the KurrentDB container
+	docker compose stop kurrentdb
+
+test-kurrent: kurrentdb-up ## Run the contract + saga tests against a real KurrentDB
+	KURRENTDB_URL=$(KURRENTDB_URL) go test ./internal/shared/eventstore/ -run TestKurrentStore -v
+	KURRENTDB_URL=$(KURRENTDB_URL) go test ./internal/payments/processes/... -run Kurrent -v
+
+dev-stack: kurrentdb-up postgres-up dev-migrate ## Run cmd/server against KurrentDB + Postgres with the async pipeline
+	STORE=kurrentdb \
+	KURRENTDB_URL=$(KURRENTDB_URL) \
+	AURORA_URL=$(AURORA_URL) \
+		go run ./cmd/server
+
+dev-kurrent: kurrentdb-up ## Run cmd/server against KurrentDB with in-memory read models (no Postgres)
+	STORE=kurrentdb KURRENTDB_URL=$(KURRENTDB_URL) go run ./cmd/server
+
+dev-reset: postgres-up ## Wipe the projection tables, then re-run migrations
+	AURORA_URL=$(AURORA_URL) go run ./cmd/devtools reset
 
 dev-seed: ## Populate a running dev-stack with a small set of wallets + movements
 	go run ./cmd/devtools seed

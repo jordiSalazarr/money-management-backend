@@ -592,11 +592,21 @@ Three items tabled for later phases came forward, because the port split left th
 
 `cmd/projector` and `cmd/reactor` are now the long-running subscribers phase 3 specifies. They refuse to start against a store with no global log, which today means they refuse to start at all — DynamoDB has no `$all`. They come alive with the KurrentDB adapter. `make dev-stack` is parked for the same reason; `make run` is the full local stack in the meantime.
 
-### Phase 2 — KurrentDB adapter
+### Phase 2 — KurrentDB adapter — **DONE**
 
-`internal/shared/eventstore/kurrent.go` implementing `Store` + `Feed`, writing `schema_version` into event metadata. A shared contract-test table run against both memory and a real container, env-gated the way `dynamodb_test.go` is today — including a case asserting that appending `MovementDue` twice for the same date fails with `WrongExpectedVersion`. `docker-compose.yml` gains a `kurrentdb` service; the `localstack` service goes away.
+`internal/shared/eventstore/kurrent.go` implements `Store` + `Feed`, with `schema_version`, `correlation_id`, `occurred_at` and `aggregate_type` in KurrentDB's user metadata, separate from the event data. `docker-compose.yml` gained a `kurrentdb` service and lost `localstack`.
 
-**Done when**: the same contract table passes against both stores.
+**Done when**: the same contract table passes against both stores. It does — all 13 cases, unchanged. Beyond that, the saga itself now runs on the real database: `TestTheSagaRunsOnKurrentDB`, `TestCompensationRunsOnKurrentDB`, and `TestTheStreamNameIsTheIdempotencyKeyOnKurrentDB`, which checks ADR 0002's dedup claim against the engine that actually enforces it. `make test-kurrent` runs them; `make dev-stack` now runs the whole application on KurrentDB + Postgres.
+
+#### The `$all` subscription must be filtered — this settles §10's open question
+
+The first run against KurrentDB **stopped the entire read side**, and the reason is worth recording because it is not obvious.
+
+The codec hard-errors on an unknown event type, deliberately: for a stream we own, a type nobody registered means the registry and the log disagree, and continuing would silently skip history ([ADR 0001](./adr/0001-event-schema-versioning-and-upcasting.md)). Applied to `$all` the same rule is an availability cliff. `$all` is the *whole database* — KurrentDB's own system streams, anything another application writes, anything left from a previous life of the data. One foreign event, once, and the projector and every process stop forever.
+
+`SubscribeAll` therefore filters server-side to the stream categories this application owns (`streams.All()`). Inside those categories an unknown type really is a fault and still halts; outside them we never look.
+
+So: **`$all` with a filter, not a subscription per category.** Global ordering is preserved, which `MovementsProjector` and the sweeper both depend on. The one trap is that adding a category to `payments/streams` without adding it to `All()` means its events are never projected — which is why `All()` sits directly beneath the category constants.
 
 ### Phase 3 — Replace the Kinesis pipeline
 
@@ -682,3 +692,8 @@ Prometheus + Grafana with per-subscription projection-lag metrics · ArgoCD for 
 - **Erasure.** `Reason`, `Name` and `Description` are free-text personal data in an append-only store. Nothing here addresses it.
 - Does the `voice` slice keep its Transcribe endpoint after teardown, or drop to text-only?
 - Should the reactor run >1 replica once persistent subscriptions are in? Correctness allows it; there's no load reason to, but it's a good way to *prove* the idempotency keys work.
+- A shared dev KurrentDB accumulates streams from old test runs, and `make dev-reset` only wipes Postgres. Either teach it to wipe KurrentDB too, or settle on `docker compose down -v` as the reset.
+
+### Answered
+
+- ~~Is `$all` with a server-side exclusion filter the right subscription, or should the projector subscribe per category?~~ **Phase 2**: `$all`, filtered server-side by stream category. It turned out to be a correctness boundary rather than an optimisation — see §8's phase 2 notes.

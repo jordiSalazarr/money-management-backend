@@ -80,12 +80,15 @@ func (f *fixture) project(t *testing.T) {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	head := f.store.Head()
+	head, err := f.store.Head(ctx)
+	if err != nil {
+		t.Fatalf("reading the log head: %v", err)
+	}
 	if head == eventstore.Start {
 		return
 	}
 	projector := projections.NewProcessesProjector(f.views)
-	err := f.store.SubscribeAll(ctx, eventstore.Start, func(r eventstore.Recorded) error {
+	err = f.store.SubscribeAll(ctx, eventstore.Start, func(r eventstore.Recorded) error {
 		decoded, err := f.codec.Decode(r)
 		if err != nil {
 			return err
