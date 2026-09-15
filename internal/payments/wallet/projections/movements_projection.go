@@ -2,7 +2,7 @@ package projections
 
 import (
 	"context"
-	"log/slog"
+	"fmt"
 	"time"
 
 	"github.com/jordisalazar/money-management/internal/payments/wallet/domain"
@@ -48,12 +48,12 @@ func NewMovementsProjector(store MovementStore) *MovementsProjector {
 	return &MovementsProjector{store: store}
 }
 
-func (p *MovementsProjector) Handle(event any, meta eventstore.EventMetadata) {
+func (p *MovementsProjector) Handle(event any, meta eventstore.EventMetadata) error {
 	ctx := context.Background()
 
 	switch e := event.(type) {
 	case wallet.MoneyDeposited:
-		p.insert(ctx, &MovementView{
+		return p.insert(ctx, &MovementView{
 			ID:         meta.EventID,
 			WalletID:   e.WalletID,
 			Type:       "deposit",
@@ -65,7 +65,7 @@ func (p *MovementsProjector) Handle(event any, meta eventstore.EventMetadata) {
 		})
 
 	case wallet.MoneyWithdrawn:
-		p.insert(ctx, &MovementView{
+		return p.insert(ctx, &MovementView{
 			ID:         meta.EventID,
 			WalletID:   e.WalletID,
 			Type:       "withdrawal",
@@ -80,7 +80,7 @@ func (p *MovementsProjector) Handle(event any, meta eventstore.EventMetadata) {
 		// A refund is a real balance change, so it belongs in the ledger. Its
 		// category is fixed rather than user-chosen — a refund is not a
 		// spending decision.
-		p.insert(ctx, &MovementView{
+		return p.insert(ctx, &MovementView{
 			ID:         meta.EventID,
 			WalletID:   e.WalletID,
 			Type:       "refund",
@@ -91,13 +91,14 @@ func (p *MovementsProjector) Handle(event any, meta eventstore.EventMetadata) {
 			OccurredAt: e.RefundedAt,
 		})
 	}
+	return nil
 }
 
 // insert uses meta.EventID as the row id, so replaying the log rebuilds the
 // same rows instead of duplicating them.
-func (p *MovementsProjector) insert(ctx context.Context, view *MovementView) {
+func (p *MovementsProjector) insert(ctx context.Context, view *MovementView) error {
 	if err := p.store.Insert(ctx, view); err != nil {
-		slog.Error("movements projector: insert failed",
-			"wallet_id", view.WalletID, "type", view.Type, "error", err)
+		return fmt.Errorf("inserting %s movement for wallet %s: %w", view.Type, view.WalletID, err)
 	}
+	return nil
 }

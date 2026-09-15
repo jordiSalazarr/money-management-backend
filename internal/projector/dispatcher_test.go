@@ -13,11 +13,13 @@ import (
 type recordingSubscriber struct {
 	seen []any
 	meta []eventstore.EventMetadata
+	err  error
 }
 
-func (r *recordingSubscriber) Handle(event any, meta eventstore.EventMetadata) {
+func (r *recordingSubscriber) Handle(event any, meta eventstore.EventMetadata) error {
 	r.seen = append(r.seen, event)
 	r.meta = append(r.meta, meta)
+	return r.err
 }
 
 func recordedDeposit(t *testing.T, codec *eventstore.Codec) eventstore.Recorded {
@@ -108,5 +110,19 @@ func TestADispatcherWithNoSubscribersIsFine(t *testing.T) {
 	d := projector.NewDispatcher(codec, nil)
 	if err := d.Handle(recordedDeposit(t, codec)); err != nil {
 		t.Fatalf("handle: %v", err)
+	}
+}
+
+// A projection that could not write must be able to stop the dispatch. If its
+// error were swallowed the checkpoint would advance past an event it never
+// applied, leaving a hole nothing would notice or repair.
+func TestASubscriberErrorPropagates(t *testing.T) {
+	codec := eventcatalog.NewCodec()
+	boom := errors.New("postgres is down")
+	d := projector.NewDispatcher(codec, nil)
+	d.Subscribe(&recordingSubscriber{err: boom})
+
+	if err := d.Handle(recordedDeposit(t, codec)); !errors.Is(err, boom) {
+		t.Fatalf("want the subscriber error to propagate, got %v", err)
 	}
 }

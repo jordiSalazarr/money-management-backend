@@ -20,7 +20,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -28,10 +27,6 @@ import (
 	"os"
 	"time"
 
-	"github.com/aws/aws-sdk-go-v2/aws"
-	"github.com/aws/aws-sdk-go-v2/config"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb"
-	"github.com/aws/aws-sdk-go-v2/service/dynamodb/types"
 	"github.com/jackc/pgx/v5/pgxpool"
 
 	"github.com/jordisalazar/money-management/internal/shared/database"
@@ -84,21 +79,23 @@ func runMigrate() error {
 	return nil
 }
 
-// runReset wipes both event store and projections so the next boot
-// starts from zero. Order matters: drop projections first, then events;
-// otherwise re-running migrations while the events table is being
-// recreated would race.
+// runReset wipes the projections and their checkpoints, so the next boot
+// rebuilds every read model from the log.
+//
+// It does NOT touch the event store. Dropping the checkpoints is what makes
+// this a rebuild rather than a truncation: without that the read models would
+// come back empty with their positions intact, nothing would replay, and the
+// result would be worse than not resetting at all.
+//
+// To wipe the events too, use `make dev-nuke` — KurrentDB has no "delete
+// everything", so that recreates its volume.
 func runReset(ctx context.Context) error {
 	auroraURL := envOr("AURORA_URL", "postgres://money:money@localhost:5432/money_management?sslmode=disable")
-	eventsTable := envOr("EVENTS_TABLE", "mm-events-dev")
 
 	if err := resetProjections(ctx, auroraURL); err != nil {
 		return fmt.Errorf("resetting projections: %w", err)
 	}
-	if err := resetEventsTable(ctx, eventsTable); err != nil {
-		return fmt.Errorf("resetting events table: %w", err)
-	}
-	log.Println("reset: complete")
+	log.Println("reset: projections and checkpoints cleared; they will rebuild from the log on next boot")
 	return nil
 }
 
@@ -132,43 +129,6 @@ func resetProjections(ctx context.Context, dbURL string) error {
 		return fmt.Errorf("running migrations: %w", err)
 	}
 	log.Printf("reset: applied %d migrations", applied)
-	return nil
-}
-
-// resetEventsTable drops + recreates the LocalStack events table. The
-// schema mirrors what backend/Makefile's create-local-tables target sets
-// up so dev-stack and reset stay in sync.
-func resetEventsTable(ctx context.Context, table string) error {
-	cfg, err := config.LoadDefaultConfig(ctx)
-	if err != nil {
-		return fmt.Errorf("loading AWS config: %w", err)
-	}
-	client := dynamodb.NewFromConfig(cfg)
-
-	_, err = client.DeleteTable(ctx, &dynamodb.DeleteTableInput{TableName: aws.String(table)})
-	if err != nil {
-		var rnf *types.ResourceNotFoundException
-		if !errors.As(err, &rnf) {
-			return fmt.Errorf("deleting %s: %w", table, err)
-		}
-	}
-
-	_, err = client.CreateTable(ctx, &dynamodb.CreateTableInput{
-		TableName: aws.String(table),
-		AttributeDefinitions: []types.AttributeDefinition{
-			{AttributeName: aws.String("aggregate_id"), AttributeType: types.ScalarAttributeTypeS},
-			{AttributeName: aws.String("version"), AttributeType: types.ScalarAttributeTypeN},
-		},
-		KeySchema: []types.KeySchemaElement{
-			{AttributeName: aws.String("aggregate_id"), KeyType: types.KeyTypeHash},
-			{AttributeName: aws.String("version"), KeyType: types.KeyTypeRange},
-		},
-		BillingMode: types.BillingModePayPerRequest,
-	})
-	if err != nil {
-		return fmt.Errorf("creating %s: %w", table, err)
-	}
-	log.Printf("reset: recreated %s", table)
 	return nil
 }
 

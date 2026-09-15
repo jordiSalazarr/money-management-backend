@@ -128,11 +128,16 @@ func (r Recorded) Meta() EventMetadata {
 }
 
 // Subscriber is a projection. The projector decodes through the Codec and
-// fans the decoded value out to every subscriber.
+// hands the decoded value to it.
 //
-// A subscriber that does not recognise an event type simply ignores it: that
-// is normal fan-out, not a fault. The fault case — a type no part of the
-// system knows — is caught earlier, by the codec.
+// A subscriber that does not recognise an event type simply ignores it and
+// returns nil: that is normal fan-out, not a fault. The fault case — a type no
+// part of the system knows — is caught earlier, by the codec.
+//
+// Handle returns an error because the checkpoint commits in the same
+// transaction as the rows. A projection that could not write has to be able to
+// abort that transaction; otherwise its position would advance past work it
+// never did, and the gap would be invisible and permanent.
 type Subscriber interface {
-	Handle(event any, meta EventMetadata)
+	Handle(event any, meta EventMetadata) error
 }

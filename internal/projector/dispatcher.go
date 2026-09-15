@@ -48,7 +48,10 @@ func (d *Dispatcher) Handle(rec eventstore.Recorded) error {
 
 	meta := rec.Meta()
 	for _, sub := range d.subscribers {
-		sub.Handle(decoded, meta)
+		if err := sub.Handle(decoded, meta); err != nil {
+			return fmt.Errorf("projector: %s at %s/%d: %w",
+				rec.EventType, rec.Stream, rec.Revision, err)
+		}
 	}
 	return nil
 }

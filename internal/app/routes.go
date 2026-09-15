@@ -32,6 +32,7 @@ import (
 	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/getwalletmovements"
 	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/withdrawmoney"
 
+	"github.com/jordisalazar/money-management/internal/shared/database"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 	"github.com/jordisalazar/money-management/internal/voice"
 )
@@ -48,6 +49,61 @@ type queryStores struct {
 	// settlement with its outcome. It is read by the sweeper as well as by
 	// GET handlers, which is why it lives here rather than in a process.
 	processes pprojections.ProcessStore
+
+	// bindTx rebinds a store to a transaction so a projection's rows commit
+	// alongside its checkpoint. It is nil in memory mode, where the stores are
+	// already in memory and there is nothing to bind.
+	bindTx *txBinders
+}
+
+// txBinders builds Postgres-backed stores against whichever DBTX a projection
+// is currently running in.
+type txBinders struct {
+	wallet    func(database.DBTX) wprojections.WalletStore
+	movement  func(database.DBTX) wprojections.MovementStore
+	debt      func(database.DBTX) dprojections.DebtStore
+	recurring func(database.DBTX) rmprojections.RecurringMovementStore
+	processes func(database.DBTX) pprojections.ProcessStore
+}
+
+// The *For methods answer "which store should this projection write through?".
+//
+// With Postgres they build one bound to the transaction in flight, so rows and
+// checkpoint commit together. In memory mode there is no transaction and the
+// single shared store is the right answer.
+func (q queryStores) walletFor(db database.DBTX) wprojections.WalletStore {
+	if q.bindTx == nil {
+		return q.wallet
+	}
+	return q.bindTx.wallet(db)
+}
+
+func (q queryStores) movementFor(db database.DBTX) wprojections.MovementStore {
+	if q.bindTx == nil {
+		return q.movement
+	}
+	return q.bindTx.movement(db)
+}
+
+func (q queryStores) debtFor(db database.DBTX) dprojections.DebtStore {
+	if q.bindTx == nil {
+		return q.debt
+	}
+	return q.bindTx.debt(db)
+}
+
+func (q queryStores) recurringFor(db database.DBTX) rmprojections.RecurringMovementStore {
+	if q.bindTx == nil {
+		return q.recurring
+	}
+	return q.bindTx.recurring(db)
+}
+
+func (q queryStores) processesFor(db database.DBTX) pprojections.ProcessStore {
+	if q.bindTx == nil {
+		return q.processes
+	}
+	return q.bindTx.processes(db)
 }
 
 func registerRoutes(

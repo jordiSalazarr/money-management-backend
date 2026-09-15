@@ -7,6 +7,7 @@
 -- Two consumers: the API, so a 202 from POST /transfers is pollable, and the
 -- sweeper, which queries the in-flight rows to find processes that have
 -- stopped making progress.
+-- +migrate Up
 CREATE TABLE IF NOT EXISTS processes_view (
     -- transfer | occurrence | debt_settlement
     kind           TEXT        NOT NULL,
@@ -45,3 +46,6 @@ CREATE INDEX IF NOT EXISTS processes_view_user_idx
     ON processes_view (user_id, requested_at DESC);
 
 DROP TABLE IF EXISTS transactions_view;
+
+-- +migrate Down
+DROP TABLE IF EXISTS processes_view;

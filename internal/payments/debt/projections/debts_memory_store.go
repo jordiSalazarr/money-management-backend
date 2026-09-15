@@ -47,3 +47,14 @@ func (s *MemoryDebtStore) List(_ context.Context, filter DebtFilter) ([]DebtView
 	}
 	return result, nil
 }
+
+func (s *MemoryDebtStore) Get(_ context.Context, id string) (*DebtView, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	d, ok := s.debts[id]
+	if !ok {
+		return nil, nil
+	}
+	out := *d
+	return &out, nil
+}

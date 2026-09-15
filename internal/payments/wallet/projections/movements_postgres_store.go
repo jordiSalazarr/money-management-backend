@@ -3,19 +3,19 @@ package projections
 import (
 	"context"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jordisalazar/money-management/internal/shared/database"
 )
 
 type PostgresMovementStore struct {
-	pool *pgxpool.Pool
+	db database.DBTX
 }
 
-func NewPostgresMovementStore(pool *pgxpool.Pool) *PostgresMovementStore {
-	return &PostgresMovementStore{pool: pool}
+func NewPostgresMovementStore(db database.DBTX) *PostgresMovementStore {
+	return &PostgresMovementStore{db: db}
 }
 
 func (s *PostgresMovementStore) Insert(ctx context.Context, view *MovementView) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		INSERT INTO movements (id, wallet_id, type, amount, currency, reason, category, occurred_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
 		ON CONFLICT (id) DO NOTHING`,
@@ -26,7 +26,7 @@ func (s *PostgresMovementStore) Insert(ctx context.Context, view *MovementView) 
 }
 
 func (s *PostgresMovementStore) ListByWalletID(ctx context.Context, walletID string) ([]MovementView, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT id, wallet_id, type, amount, currency, reason, category, occurred_at
 		FROM movements
 		WHERE wallet_id = $1

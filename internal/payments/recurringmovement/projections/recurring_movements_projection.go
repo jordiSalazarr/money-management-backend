@@ -2,7 +2,7 @@ package projections
 
 import (
 	"context"
-	"log/slog"
+	"fmt"
 	"time"
 
 	"github.com/jordisalazar/money-management/internal/payments/processes/occurrence/domain"
@@ -33,19 +33,17 @@ type RecurringMovementFilter struct {
 
 type RecurringMovementStore interface {
 	Upsert(ctx context.Context, view *RecurringMovementView) error
+	// Get returns nil when the row does not exist.
+	Get(ctx context.Context, id string) (*RecurringMovementView, error)
 	List(ctx context.Context, filter RecurringMovementFilter) ([]RecurringMovementView, error)
 }
 
 type RecurringMovementsProjector struct {
 	store RecurringMovementStore
-	cache map[string]*RecurringMovementView
 }
 
 func NewRecurringMovementsProjector(store RecurringMovementStore) *RecurringMovementsProjector {
-	return &RecurringMovementsProjector{
-		store: store,
-		cache: make(map[string]*RecurringMovementView),
-	}
+	return &RecurringMovementsProjector{store: store}
 }
 
 func advanceDate(from time.Time, frequency string) time.Time {
@@ -61,7 +59,7 @@ func advanceDate(from time.Time, frequency string) time.Time {
 	}
 }
 
-func (p *RecurringMovementsProjector) Handle(event any, _ eventstore.EventMetadata) {
+func (p *RecurringMovementsProjector) Handle(event any, _ eventstore.EventMetadata) error {
 	ctx := context.Background()
 
 	switch e := event.(type) {
@@ -86,37 +84,27 @@ func (p *RecurringMovementsProjector) Handle(event any, _ eventstore.EventMetada
 			Active:      true,
 			CreatedAt:   e.RegisteredAt,
 		}
-		p.cache[e.RecurringMovementID] = view
-		if err := p.store.Upsert(ctx, view); err != nil {
-			slog.Error("recurring movements projector: upsert failed",
-				"recurring_movement_id", e.RecurringMovementID, "error", err)
-		}
+		return p.save(ctx, view)
 
 	// The schedule advances on either outcome of an occurrence. A skipped
 	// month must still move NextDueDate on: leaving it where it was would make
 	// the cron re-offer the same date forever, so one short balance would jam
 	// the standing order permanently.
 	case occurrence.MovementExecuted:
-		p.advance(ctx, e.RecurringMovementID, e.ForDate)
+		return p.advance(ctx, e.RecurringMovementID, e.ForDate)
 
 	case occurrence.MovementSkipped:
-		p.advance(ctx, e.RecurringMovementID, e.ForDate)
+		return p.advance(ctx, e.RecurringMovementID, e.ForDate)
 
 	case recurringmovement.RecurringMovementStopped:
-		view, ok := p.cache[e.RecurringMovementID]
-		if !ok {
-			slog.Error("recurring movements projector: not in cache",
-				"recurring_movement_id", e.RecurringMovementID)
-			return
+		view, err := p.load(ctx, e.RecurringMovementID)
+		if err != nil {
+			return err
 		}
-
 		view.Active = false
-
-		if err := p.store.Upsert(ctx, view); err != nil {
-			slog.Error("recurring movements projector: upsert failed",
-				"recurring_movement_id", e.RecurringMovementID, "error", err)
-		}
+		return p.save(ctx, view)
 	}
+	return nil
 }
 
 // advance moves the schedule past forDate. It is called for both outcomes of
@@ -126,21 +114,33 @@ func (p *RecurringMovementsProjector) Handle(event any, _ eventstore.EventMetada
 // its occurrences'. That is a read-side dependency on a process, which the
 // one-way import rule in ADR 0002 permits: the rule exists to stop command
 // handlers reaching into processes, and a projection issues no commands.
-func (p *RecurringMovementsProjector) advance(ctx context.Context, recurringMovementID string, forDate time.Time) {
-	view, ok := p.cache[recurringMovementID]
-	if !ok {
-		slog.Error("recurring movements projector: not in cache",
-			"recurring_movement_id", recurringMovementID)
-		return
+func (p *RecurringMovementsProjector) advance(ctx context.Context, recurringMovementID string, forDate time.Time) error {
+	view, err := p.load(ctx, recurringMovementID)
+	if err != nil {
+		return err
 	}
 
 	view.NextDueDate = advanceDate(forDate, view.Frequency)
 	if view.EndDate != nil && view.NextDueDate.After(*view.EndDate) {
 		view.Active = false
 	}
+	return p.save(ctx, view)
+}
 
+func (p *RecurringMovementsProjector) save(ctx context.Context, view *RecurringMovementView) error {
 	if err := p.store.Upsert(ctx, view); err != nil {
-		slog.Error("recurring movements projector: upsert failed",
-			"recurring_movement_id", recurringMovementID, "error", err)
+		return fmt.Errorf("upserting recurring movement %s: %w", view.ID, err)
 	}
+	return nil
+}
+
+func (p *RecurringMovementsProjector) load(ctx context.Context, id string) (*RecurringMovementView, error) {
+	view, err := p.store.Get(ctx, id)
+	if err != nil {
+		return nil, fmt.Errorf("reading recurring movement %s: %w", id, err)
+	}
+	if view == nil {
+		return nil, fmt.Errorf("recurring movements projector: no instruction %s — its registration was never projected", id)
+	}
+	return view, nil
 }

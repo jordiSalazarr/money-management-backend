@@ -1,4 +1,4 @@
-.PHONY: help test test-ddb test-kurrent kurrentdb-up kurrentdb-down dev-kurrent build run build-lambda build-projector build-migrate build-reactor build-recurring-cron build-all-lambdas localstack-up localstack-down dev-dynamodb dev-stack postgres-up postgres-down dev-migrate dev-reset dev-seed create-local-tables
+.PHONY: help test test-ddb test-kurrent kurrentdb-up kurrentdb-down dev-kurrent build run build-lambda build-projector build-migrate build-reactor build-recurring-cron build-all-lambdas localstack-up localstack-down dev-dynamodb dev-stack postgres-up postgres-down dev-migrate dev-reset dev-nuke dev-seed create-local-tables
 
 LOCALSTACK_ENDPOINT ?= http://localhost:4566
 KURRENTDB_URL       ?= kurrentdb://localhost:2113?tls=false
@@ -109,7 +109,12 @@ kurrentdb-up: ## Start the KurrentDB container (idempotent)
 kurrentdb-down: ## Stop the KurrentDB container
 	docker compose stop kurrentdb
 
-test-kurrent: kurrentdb-up ## Run the contract + saga tests against a real KurrentDB
+test-kurrent: kurrentdb-up ## Run the contract + saga tests against a real KurrentDB (stop dev-stack first)
+	@if pgrep -f "/server$$" >/dev/null 2>&1; then \
+		echo "A server is running and is subscribed to \$$all — it will drive the same"; \
+		echo "transfers these tests drive, and they will collide. Stop it first."; \
+		exit 1; \
+	fi
 	KURRENTDB_URL=$(KURRENTDB_URL) go test ./internal/shared/eventstore/ -run TestKurrentStore -v
 	KURRENTDB_URL=$(KURRENTDB_URL) go test ./internal/payments/processes/... -run Kurrent -v
 
@@ -124,6 +129,19 @@ dev-kurrent: kurrentdb-up ## Run cmd/server against KurrentDB with in-memory rea
 
 dev-reset: postgres-up ## Wipe the projection tables, then re-run migrations
 	AURORA_URL=$(AURORA_URL) go run ./cmd/devtools reset
+
+# A full reset has to take the event store with it.
+#
+# Wiping only the projections leaves them empty with their checkpoints intact,
+# so nothing replays and the read models stay blank — worse than not resetting
+# at all. KurrentDB has no "delete everything", so the volume goes.
+dev-nuke: ## Wipe BOTH the event store and the projections, then re-migrate
+	docker compose rm -sf kurrentdb
+	docker volume rm -f $$(docker compose config --volumes | grep kurrent | sed "s|^|$$(basename $(CURDIR))_|") 2>/dev/null || true
+	$(MAKE) kurrentdb-up
+	docker compose exec -T postgres psql -U money -d money_management -c "DROP TABLE IF EXISTS projection_checkpoints;" >/dev/null 2>&1 || true
+	$(MAKE) dev-reset
+	@echo "event store and projections are empty; checkpoints cleared"
 
 dev-seed: ## Populate a running dev-stack with a small set of wallets + movements
 	go run ./cmd/devtools seed

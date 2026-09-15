@@ -2,21 +2,23 @@ package projections
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jordisalazar/money-management/internal/shared/database"
 )
 
 type PostgresDebtStore struct {
-	pool *pgxpool.Pool
+	db database.DBTX
 }
 
-func NewPostgresDebtStore(pool *pgxpool.Pool) *PostgresDebtStore {
-	return &PostgresDebtStore{pool: pool}
+func NewPostgresDebtStore(db database.DBTX) *PostgresDebtStore {
+	return &PostgresDebtStore{db: db}
 }
 
 func (s *PostgresDebtStore) Upsert(ctx context.Context, view *DebtView) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		INSERT INTO debts_view (id, owner_id, wallet_id, amount, currency, direction, reason, status, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT (id) DO UPDATE SET
@@ -53,7 +55,7 @@ func (s *PostgresDebtStore) List(ctx context.Context, filter DebtFilter) ([]Debt
 
 	query += " ORDER BY created_at DESC"
 
-	rows, err := s.pool.Query(ctx, query, args...)
+	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -70,4 +72,21 @@ func (s *PostgresDebtStore) List(ctx context.Context, filter DebtFilter) ([]Debt
 		result = append(result, d)
 	}
 	return result, rows.Err()
+}
+
+func (s *PostgresDebtStore) Get(ctx context.Context, id string) (*DebtView, error) {
+	row := s.db.QueryRow(ctx, `
+		SELECT id, owner_id, wallet_id, amount, currency, direction, reason, status, created_at
+		FROM debts_view WHERE id = $1`, id)
+
+	var v DebtView
+	err := row.Scan(&v.ID, &v.OwnerID, &v.WalletID, &v.Amount, &v.Currency,
+		&v.Direction, &v.Reason, &v.Status, &v.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading debt %s: %w", id, err)
+	}
+	return &v, nil
 }

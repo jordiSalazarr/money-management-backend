@@ -2,7 +2,7 @@ package projections
 
 import (
 	"context"
-	"log/slog"
+	"fmt"
 	"time"
 
 	"github.com/jordisalazar/money-management/internal/payments/debt/domain"
@@ -31,22 +31,27 @@ type DebtFilter struct {
 
 type DebtStore interface {
 	Upsert(ctx context.Context, view *DebtView) error
+	// Get returns nil when the row does not exist.
+	Get(ctx context.Context, id string) (*DebtView, error)
 	List(ctx context.Context, filter DebtFilter) ([]DebtView, error)
 }
 
 type DebtsProjector struct {
 	store DebtStore
-	cache map[string]*DebtView
 }
 
 func NewDebtsProjector(store DebtStore) *DebtsProjector {
-	return &DebtsProjector{
-		store: store,
-		cache: make(map[string]*DebtView),
-	}
+	return &DebtsProjector{store: store}
 }
 
-func (p *DebtsProjector) Handle(event any, _ eventstore.EventMetadata) {
+// Handle applies one event to the debt read model.
+//
+// It covers the whole settlement lifecycle, not just its happy end. A debt
+// being settled passes through "settling" while the reactor moves the money,
+// and returns to standing if the wallet refuses — both are states a person is
+// entitled to see, and showing nothing until it completes is what made the old
+// behaviour feel instantaneous when it was not.
+func (p *DebtsProjector) Handle(event any, _ eventstore.EventMetadata) error {
 	ctx := context.Background()
 
 	switch e := event.(type) {
@@ -59,22 +64,44 @@ func (p *DebtsProjector) Handle(event any, _ eventstore.EventMetadata) {
 			Currency:  e.Currency,
 			Direction: e.Direction,
 			Reason:    e.Reason,
-			Status:    "created",
+			Status:    string(debt.DebtStatusCreated),
 			CreatedAt: e.CreatedAt,
 		}
-		p.cache[e.DebtID] = view
-		if err := p.store.Upsert(ctx, view); err != nil {
-			slog.Error("debts projector: upsert failed", "debt_id", e.DebtID, "error", err)
-		}
+		return p.save(ctx, view)
+
+	case debt.DebtSettlementRequested:
+		return p.setStatus(ctx, e.DebtID, string(debt.DebtStatusSettling))
+
 	case debt.DebtSettled:
-		view, ok := p.cache[e.DebtID]
-		if !ok {
-			slog.Error("debts projector: debt not in cache", "debt_id", e.DebtID)
-			return
-		}
-		view.Status = string(debt.DebtStatusSettled)
-		if err := p.store.Upsert(ctx, view); err != nil {
-			slog.Error("debts projector: upsert failed", "debt_id", e.DebtID, "error", err)
-		}
+		return p.setStatus(ctx, e.DebtID, string(debt.DebtStatusSettled))
+
+	case debt.DebtSettlementFailed:
+		// The money never moved, so the debt still stands and can be settled
+		// again later.
+		return p.setStatus(ctx, e.DebtID, string(debt.DebtStatusCreated))
 	}
+	return nil
+}
+
+// setStatus is a read-modify-write against the cache. A miss means an event
+// arrived for a debt whose DebtRecorded this projection never saw — the read
+// model is already wrong, and letting the checkpoint advance past it would
+// make that permanent.
+func (p *DebtsProjector) setStatus(ctx context.Context, debtID, status string) error {
+	view, err := p.store.Get(ctx, debtID)
+	if err != nil {
+		return fmt.Errorf("reading debt %s: %w", debtID, err)
+	}
+	if view == nil {
+		return fmt.Errorf("debts projector: no debt %s — its DebtRecorded was never projected", debtID)
+	}
+	view.Status = status
+	return p.save(ctx, view)
+}
+
+func (p *DebtsProjector) save(ctx context.Context, view *DebtView) error {
+	if err := p.store.Upsert(ctx, view); err != nil {
+		return fmt.Errorf("upserting debt %s: %w", view.ID, err)
+	}
+	return nil
 }

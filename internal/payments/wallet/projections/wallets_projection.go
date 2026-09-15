@@ -2,7 +2,7 @@ package projections
 
 import (
 	"context"
-	"log/slog"
+	"fmt"
 	"time"
 
 	"github.com/jordisalazar/money-management/internal/payments/wallet/domain"
@@ -25,24 +25,38 @@ type WalletView struct {
 
 type WalletStore interface {
 	Upsert(ctx context.Context, view *WalletView) error
+	// Get returns nil when the row does not exist. Projections read-modify-write
+	// through it, so they hold no state between events and can resume from a
+	// checkpoint rather than only from the beginning of the log.
+	Get(ctx context.Context, id string) (*WalletView, error)
 	ListByUserID(ctx context.Context, userID string) ([]WalletView, error)
 }
 
+// WalletsProjector builds the wallet read model.
+//
+// It holds no state between events. It used to keep an in-memory cache to save
+// a round trip, and that cache was incompatible with checkpointing: a
+// projection resuming from a checkpoint starts with an empty cache and a
+// populated table, so every wallet created before the checkpoint would miss.
+// The cache only ever worked because the old pipeline always replayed the
+// whole log. Reading through the store also makes the projector correct if it
+// is ever run with more than one replica.
 type WalletsProjector struct {
 	store WalletStore
-	// cache keeps an in-memory copy so Handle can do read-modify-write
-	// without a DB round-trip on every event.
-	cache map[string]*WalletView
 }
 
 func NewWalletsProjector(store WalletStore) *WalletsProjector {
-	return &WalletsProjector{
-		store: store,
-		cache: make(map[string]*WalletView),
-	}
+	return &WalletsProjector{store: store}
 }
 
-func (p *WalletsProjector) Handle(event any, _ eventstore.EventMetadata) {
+// Handle applies one event to the wallet read model.
+//
+// Every event that changes a balance must be here, or the projected balance
+// drifts permanently from what the aggregate would compute — and the projected
+// value is the one a person sees. MoneyRefunded was missing exactly that way:
+// after a compensated transfer the wallet read short by the refunded amount,
+// for good.
+func (p *WalletsProjector) Handle(event any, _ eventstore.EventMetadata) error {
 	ctx := context.Background()
 
 	switch e := event.(type) {
@@ -57,41 +71,57 @@ func (p *WalletsProjector) Handle(event any, _ eventstore.EventMetadata) {
 			Category:       e.Category,
 			CreatedAt:      e.CreatedAt,
 		}
-		p.cache[e.WalletID] = view
-		if err := p.store.Upsert(ctx, view); err != nil {
-			slog.Error("wallets projector: upsert failed", "wallet_id", e.WalletID, "error", err)
-		}
+		return p.save(ctx, view)
 
 	case wallet.MoneyDeposited:
-		w, ok := p.cache[e.WalletID]
-		if !ok {
-			return
-		}
-		w.CurrentBalance += e.Amount
-		w.LastMovementAt = &e.DepositedAt
-		if err := p.store.Upsert(ctx, w); err != nil {
-			slog.Error("wallets projector: upsert failed", "wallet_id", e.WalletID, "error", err)
-		}
+		return p.adjust(ctx, e.WalletID, func(w *WalletView) {
+			w.CurrentBalance += e.Amount
+			w.LastMovementAt = &e.DepositedAt
+		})
 
 	case wallet.MoneyWithdrawn:
-		w, ok := p.cache[e.WalletID]
-		if !ok {
-			return
-		}
-		w.CurrentBalance -= e.Amount
-		w.LastMovementAt = &e.WithdrawnAt
-		if err := p.store.Upsert(ctx, w); err != nil {
-			slog.Error("wallets projector: upsert failed", "wallet_id", e.WalletID, "error", err)
-		}
+		return p.adjust(ctx, e.WalletID, func(w *WalletView) {
+			w.CurrentBalance -= e.Amount
+			w.LastMovementAt = &e.WithdrawnAt
+		})
+
+	case wallet.MoneyRefunded:
+		// A refund puts money back. Omitting it here is what caused the drift
+		// above; the movements ledger had the row but the balance did not.
+		return p.adjust(ctx, e.WalletID, func(w *WalletView) {
+			w.CurrentBalance += e.Amount
+			w.LastMovementAt = &e.RefundedAt
+		})
 
 	case wallet.WalletDisabled:
-		w, ok := p.cache[e.WalletID]
-		if !ok {
-			return
-		}
-		w.Disabled = true
-		if err := p.store.Upsert(ctx, w); err != nil {
-			slog.Error("wallets projector: upsert failed", "wallet_id", e.WalletID, "error", err)
-		}
+		return p.adjust(ctx, e.WalletID, func(w *WalletView) {
+			w.Disabled = true
+		})
 	}
+	return nil
+}
+
+// adjust reads a wallet, applies a change, and writes it back.
+//
+// A missing row is an error, not a shrug: it means an event arrived for a
+// wallet whose WalletAdded this projection never saw, so the read model is
+// already inconsistent and advancing the checkpoint past it would make that
+// permanent.
+func (p *WalletsProjector) adjust(ctx context.Context, walletID string, change func(*WalletView)) error {
+	w, err := p.store.Get(ctx, walletID)
+	if err != nil {
+		return fmt.Errorf("reading wallet %s: %w", walletID, err)
+	}
+	if w == nil {
+		return fmt.Errorf("wallets projector: no wallet %s — its WalletAdded was never projected", walletID)
+	}
+	change(w)
+	return p.save(ctx, w)
+}
+
+func (p *WalletsProjector) save(ctx context.Context, view *WalletView) error {
+	if err := p.store.Upsert(ctx, view); err != nil {
+		return fmt.Errorf("upserting wallet %s: %w", view.ID, err)
+	}
+	return nil
 }

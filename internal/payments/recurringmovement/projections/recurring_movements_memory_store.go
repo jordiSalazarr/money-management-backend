@@ -41,3 +41,14 @@ func (s *MemoryRecurringMovementStore) List(_ context.Context, filter RecurringM
 	}
 	return result, nil
 }
+
+func (s *MemoryRecurringMovementStore) Get(_ context.Context, id string) (*RecurringMovementView, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	rm, ok := s.items[id]
+	if !ok {
+		return nil, nil
+	}
+	out := *rm
+	return &out, nil
+}

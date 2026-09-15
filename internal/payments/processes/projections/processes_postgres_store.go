@@ -6,22 +6,22 @@ import (
 	"time"
 
 	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jordisalazar/money-management/internal/shared/database"
 )
 
 type PostgresProcessStore struct {
-	pool *pgxpool.Pool
+	db database.DBTX
 }
 
-func NewPostgresProcessStore(pool *pgxpool.Pool) *PostgresProcessStore {
-	return &PostgresProcessStore{pool: pool}
+func NewPostgresProcessStore(db database.DBTX) *PostgresProcessStore {
+	return &PostgresProcessStore{db: db}
 }
 
 const processColumns = `kind, id, user_id, status, reason, amount, currency,
 	attempts, from_wallet_id, to_wallet_id, requested_at, settled_at`
 
 func (s *PostgresProcessStore) Upsert(ctx context.Context, view *ProcessView) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		INSERT INTO processes_view (`+processColumns+`)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)
 		ON CONFLICT (kind, id) DO UPDATE SET
@@ -37,7 +37,7 @@ func (s *PostgresProcessStore) Upsert(ctx context.Context, view *ProcessView) er
 }
 
 func (s *PostgresProcessStore) Get(ctx context.Context, kind, id string) (*ProcessView, error) {
-	row := s.pool.QueryRow(ctx,
+	row := s.db.QueryRow(ctx,
 		`SELECT `+processColumns+` FROM processes_view WHERE kind = $1 AND id = $2`, kind, id)
 
 	view, err := scanProcess(row)
@@ -56,7 +56,7 @@ func (s *PostgresProcessStore) Get(ctx context.Context, kind, id string) (*Proce
 // ListInFlightBefore is the sweeper's query: processes that have not reached a
 // terminal status and have been waiting longer than the threshold.
 func (s *PostgresProcessStore) ListInFlightBefore(ctx context.Context, cutoff time.Time) ([]ProcessView, error) {
-	rows, err := s.pool.Query(ctx, `
+	rows, err := s.db.Query(ctx, `
 		SELECT `+processColumns+` FROM processes_view
 		WHERE settled_at IS NULL
 		  AND status NOT IN ('completed', 'failed', 'stuck', 'executed', 'skipped', 'settled')
@@ -70,7 +70,7 @@ func (s *PostgresProcessStore) ListInFlightBefore(ctx context.Context, cutoff ti
 }
 
 func (s *PostgresProcessStore) ListByUserID(ctx context.Context, userID string) ([]ProcessView, error) {
-	rows, err := s.pool.Query(ctx,
+	rows, err := s.db.Query(ctx,
 		`SELECT `+processColumns+` FROM processes_view WHERE user_id = $1 ORDER BY requested_at DESC`, userID)
 	if err != nil {
 		return nil, err

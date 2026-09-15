@@ -25,7 +25,14 @@ import (
 // codec, the same command handlers — only the store differs.
 //
 // Skips when KURRENTDB_URL is unset. `make test-kurrent` runs them.
+//
+// Stop the dev stack first. These share a database with it, and a running
+// stack subscribes to $all — so its reactor drives the same transfers these
+// tests are driving, and both writers collide on the transfer's stream. The
+// symptom is ErrConcurrencyConflict from a step that should have been
+// uncontended, which reads like a product bug and is not one.
 type kurrentFixture struct {
+	userID   string
 	store    *eventstore.KurrentStore
 	codec    *eventstore.Codec
 	transfer *transfer.Reactor
@@ -50,7 +57,14 @@ func newKurrentFixture(t *testing.T) *kurrentFixture {
 	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
 	clock := func() time.Time { return now }
 
+	// A real user id, not "user-1". These tests share a database with the dev
+	// stack, whose Postgres read models type user_id as UUID — so a test that
+	// writes a non-UUID leaves an event the projector can never apply, and it
+	// stops there permanently.
+	userID := uuid.NewString()
+
 	return &kurrentFixture{
+		userID:   userID,
 		store:    store,
 		codec:    codec,
 		transfer: transfer.NewReactor(store, codec, clock),
@@ -62,7 +76,7 @@ func newKurrentFixture(t *testing.T) *kurrentFixture {
 func (f *kurrentFixture) wallet(t *testing.T, currency string, balance int) string {
 	t.Helper()
 	id, err := addwallet.NewCommandHandler(f.store, f.codec).Handle(context.Background(), addwallet.Command{
-		UserID: "user-1", Name: "w", InitialAmount: balance, Currency: currency, Category: "Cash",
+		UserID: f.userID, Name: "w", InitialAmount: balance, Currency: currency, Category: "Cash",
 	})
 	if err != nil {
 		t.Fatalf("creating wallet: %v", err)
@@ -120,7 +134,7 @@ func TestTheSagaRunsOnKurrentDB(t *testing.T) {
 	to := f.wallet(t, "EUR", 0)
 
 	id := uuid.NewString()
-	agg, err := transferdomain.Request(id, "user-1", from, to, 5000, "EUR", "rent", f.now)
+	agg, err := transferdomain.Request(id, f.userID, from, to, 5000, "EUR", "rent", f.now)
 	if err != nil {
 		t.Fatalf("request: %v", err)
 	}
@@ -151,7 +165,7 @@ func TestCompensationRunsOnKurrentDB(t *testing.T) {
 	to := f.wallet(t, "EUR", 0)
 
 	id := uuid.NewString()
-	agg, _ := transferdomain.Request(id, "user-1", from, to, 5000, "EUR", "rent", f.now)
+	agg, _ := transferdomain.Request(id, f.userID, from, to, 5000, "EUR", "rent", f.now)
 	if err := eventstore.AppendChanges(context.Background(), f.store, f.codec,
 		streams.Transfer(id), eventstore.NoStream, agg.Changes(), "corr-1", f.now); err != nil {
 		t.Fatalf("appending: %v", err)
@@ -160,7 +174,7 @@ func TestCompensationRunsOnKurrentDB(t *testing.T) {
 	disable := disablewallet.NewCommandHandler(f.store, f.codec)
 	for _, w := range []string{to, from} {
 		if err := disable.Handle(context.Background(), disablewallet.Command{
-			WalletID: w, UserID: "user-1", Reason: "closing", DisabledAt: f.now,
+			WalletID: w, UserID: f.userID, Reason: "closing", DisabledAt: f.now,
 		}); err != nil {
 			t.Fatalf("disabling %s: %v", w, err)
 		}
@@ -189,7 +203,7 @@ func TestTheStreamNameIsTheIdempotencyKeyOnKurrentDB(t *testing.T) {
 	stream := streams.Occurrence(rmID, forDate)
 
 	due := func() error {
-		agg, err := occurrencedomain.Due(stream.ID, rmID, w, "user-1", "withdrawal", 9900, "EUR", "gym", forDate, f.now)
+		agg, err := occurrencedomain.Due(stream.ID, rmID, w, f.userID, "withdrawal", 9900, "EUR", "gym", forDate, f.now)
 		if err != nil {
 			return err
 		}

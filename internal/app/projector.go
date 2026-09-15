@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +14,7 @@ import (
 	rmprojections "github.com/jordisalazar/money-management/internal/payments/recurringmovement/projections"
 	wprojections "github.com/jordisalazar/money-management/internal/payments/wallet/projections"
 	"github.com/jordisalazar/money-management/internal/projector"
+	"github.com/jordisalazar/money-management/internal/shared/database"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 	"github.com/jordisalazar/money-management/pkg/logger"
 )
@@ -25,26 +27,36 @@ type ProjectorOptions struct {
 	AuroraURL string
 }
 
-// ProjectorBundle bundles the dispatcher, the feed it consumes, and the
-// query stores it writes.
+// ProjectorBundle is every projection, each with its own subscription.
 type ProjectorBundle struct {
-	Dispatcher *projector.Dispatcher
-	Feed       eventstore.Feed
-	Queries    queryStores
-	Cleanup    func()
+	Runners []*projector.Runner
+	Queries queryStores
+	Cleanup func()
 }
 
-// Run subscribes and projects until ctx is cancelled.
+// Run starts every projection and blocks until ctx is cancelled or one of
+// them fails.
 //
-// It starts from the beginning of the log on every boot. That is correct
-// rather than merely tolerable: every projection derives its row ids from
-// meta.EventID, so a replay rebuilds the same rows instead of duplicating
-// them. Persisted checkpoints (ADR 0003) make this fast and let one
-// projection be rebuilt alone; they are not what makes it safe.
+// A projection that fails stops the whole binary rather than being left behind
+// quietly. Its checkpoint has not advanced, so a restart retries exactly the
+// event it choked on — but a projector silently serving one stale read model
+// is worse than one that is visibly down.
 func (b *ProjectorBundle) Run(ctx context.Context) error {
-	return b.Feed.SubscribeAll(ctx, eventstore.Start, func(rec eventstore.Recorded) error {
-		return b.Dispatcher.Handle(rec)
-	})
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
+
+	errs := make(chan error, len(b.Runners))
+	for _, r := range b.Runners {
+		go func() { errs <- r.Run(ctx) }()
+	}
+
+	for range b.Runners {
+		if err := <-errs; err != nil && !errors.Is(err, context.Canceled) {
+			cancel()
+			return err
+		}
+	}
+	return nil
 }
 
 // BuildProjector wires every read-model projection store on top of an
@@ -82,15 +94,19 @@ func BuildProjector(ctx context.Context, log logger.Logger, opts ProjectorOption
 		return nil, fmt.Errorf("the projector needs a store with a global log to subscribe to; STORE=%s has none", mode)
 	}
 
-	d := projector.NewDispatcher(deps.codec, slog.Default())
-	subscribeProjections(d, q)
+	checkpoints := projector.NewPostgresCheckpoints(pool)
+	transactor := database.NewPoolTransactor(pool)
 
-	log.Info("projector wired", "aurora_host_sanitised", sanitiseDSN(url))
+	runners := make([]*projector.Runner, 0, 5)
+	for _, def := range projectionDefs(q) {
+		runners = append(runners, projector.NewRunner(def, deps.feed, deps.codec, checkpoints, transactor, slog.Default()))
+	}
+
+	log.Info("projector wired", "projections", len(runners), "postgres_host_sanitised", sanitiseDSN(url))
 
 	return &ProjectorBundle{
-		Dispatcher: d,
-		Feed:       deps.feed,
-		Queries:    q,
+		Runners: runners,
+		Queries: q,
 		Cleanup: func() {
 			storeCleanup()
 			pool.Close()
@@ -102,6 +118,9 @@ func BuildProjector(ctx context.Context, log logger.Logger, opts ProjectorOption
 // stores that GET handlers and the voice slice consume. The transaction
 // store isn't included because nothing reads it — only its own projector
 // writes it.
+// buildAuroraQueryStores builds the read-side stores (bound to the pool) and
+// the binders a projection uses to write through whichever transaction it is
+// running in.
 func buildAuroraQueryStores(pool *pgxpool.Pool) queryStores {
 	return queryStores{
 		wallet:    wprojections.NewPostgresWalletStore(pool),
@@ -109,22 +128,62 @@ func buildAuroraQueryStores(pool *pgxpool.Pool) queryStores {
 		debt:      dprojections.NewPostgresDebtStore(pool),
 		recurring: rmprojections.NewPostgresRecurringMovementStore(pool),
 		processes: pprojections.NewPostgresProcessStore(pool),
+		bindTx: &txBinders{
+			wallet:   func(db database.DBTX) wprojections.WalletStore { return wprojections.NewPostgresWalletStore(db) },
+			movement: func(db database.DBTX) wprojections.MovementStore { return wprojections.NewPostgresMovementStore(db) },
+			debt:     func(db database.DBTX) dprojections.DebtStore { return dprojections.NewPostgresDebtStore(db) },
+			recurring: func(db database.DBTX) rmprojections.RecurringMovementStore {
+				return rmprojections.NewPostgresRecurringMovementStore(db)
+			},
+			processes: func(db database.DBTX) pprojections.ProcessStore { return pprojections.NewPostgresProcessStore(db) },
+		},
 	}
 }
 
-// subscribeProjections is the one list of read models, used by every entry
-// point so local and deployed builds cannot drift apart.
+// projectionDefs is the one list of read models, used by every entry point so
+// local and deployed builds cannot drift apart.
 //
-// Note all five share a dispatcher here. ADR 0003 gives each projection its
-// own subscription and checkpoint so one can be rebuilt alone; that split
-// lands with the real checkpoint store in phase 3, and this is the shape it
-// grows out of.
-func subscribeProjections(d *projector.Dispatcher, q queryStores) {
-	d.Subscribe(wprojections.NewWalletsProjector(q.wallet))
-	d.Subscribe(wprojections.NewMovementsProjector(q.movement))
-	d.Subscribe(dprojections.NewDebtsProjector(q.debt))
-	d.Subscribe(rmprojections.NewRecurringMovementsProjector(q.recurring))
-	d.Subscribe(pprojections.NewProcessesProjector(q.processes))
+// Each gets its own subscription and its own checkpoint row (ADR 0003), which
+// is what makes rebuilding one of them a local operation: truncate its table,
+// delete its checkpoint, restart. With a shared position, adding a single
+// upcaster would mean replaying all five.
+//
+// The Name is the checkpoint key. Changing one starts that projection over
+// from the beginning of the log — which is the intended way to force a rebuild,
+// but not something to do by accident.
+//
+// Build takes a DBTX because each event is applied inside a transaction that
+// also carries the checkpoint. In memory mode the DBTX is nil and the stores
+// ignore it.
+func projectionDefs(q queryStores) []projector.Projection {
+	return []projector.Projection{
+		{
+			Name:  "wallets_projector",
+			Build: func(db database.DBTX) eventstore.Subscriber { return wprojections.NewWalletsProjector(q.walletFor(db)) },
+		},
+		{
+			Name: "movements_projector",
+			Build: func(db database.DBTX) eventstore.Subscriber {
+				return wprojections.NewMovementsProjector(q.movementFor(db))
+			},
+		},
+		{
+			Name:  "debts_projector",
+			Build: func(db database.DBTX) eventstore.Subscriber { return dprojections.NewDebtsProjector(q.debtFor(db)) },
+		},
+		{
+			Name: "recurring_movements_projector",
+			Build: func(db database.DBTX) eventstore.Subscriber {
+				return rmprojections.NewRecurringMovementsProjector(q.recurringFor(db))
+			},
+		},
+		{
+			Name: "processes_projector",
+			Build: func(db database.DBTX) eventstore.Subscriber {
+				return pprojections.NewProcessesProjector(q.processesFor(db))
+			},
+		},
+	}
 }
 
 // sanitiseDSN strips userinfo from a Postgres URL so the log line is safe

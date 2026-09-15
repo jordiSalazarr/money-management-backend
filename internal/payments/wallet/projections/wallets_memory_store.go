@@ -44,3 +44,14 @@ func (s *MemoryWalletStore) ListByUserID(_ context.Context, userID string) ([]Wa
 	})
 	return result, nil
 }
+
+func (s *MemoryWalletStore) Get(_ context.Context, id string) (*WalletView, error) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	w, ok := s.wallets[id]
+	if !ok {
+		return nil, nil
+	}
+	out := *w
+	return &out, nil
+}

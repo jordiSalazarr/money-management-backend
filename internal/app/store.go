@@ -13,6 +13,8 @@ import (
 	rmprojections "github.com/jordisalazar/money-management/internal/payments/recurringmovement/projections"
 	"github.com/jordisalazar/money-management/internal/payments/streams"
 	wprojections "github.com/jordisalazar/money-management/internal/payments/wallet/projections"
+	"github.com/jordisalazar/money-management/internal/projector"
+	"github.com/jordisalazar/money-management/internal/shared/database"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 	"github.com/jordisalazar/money-management/pkg/logger"
 )
@@ -34,6 +36,12 @@ type deps struct {
 	// process; dynamodb mode wires them only when AURORA_URL is set.
 	queriesReady bool
 	queries      queryStores
+
+	// checkpoints and transactor are how a projection commits its rows and its
+	// position together. In memory mode both are the no-op variants: there is
+	// nothing durable to checkpoint against and no transaction to join.
+	checkpoints projector.CheckpointStore
+	transactor  projector.Transactor
 }
 
 // resolveStoreMode reads STORE and falls back to opts.DefaultStore. The
@@ -90,9 +98,11 @@ func buildDynamoDeps(ctx context.Context, log logger.Logger) (deps, func(), erro
 	if auroraURL == "" {
 		log.Info("AURORA_URL unset — GET handlers stay off (post-only mode)")
 		return deps{
-			mode:  StoreModeDynamoDB,
-			store: store,
-			codec: codec,
+			mode:        StoreModeDynamoDB,
+			store:       store,
+			codec:       codec,
+			checkpoints: projector.NewMemoryCheckpoints(),
+			transactor:  projector.NoTransactor{},
 		}, func() {}, nil
 	}
 
@@ -108,6 +118,8 @@ func buildDynamoDeps(ctx context.Context, log logger.Logger) (deps, func(), erro
 		codec:        codec,
 		queries:      buildAuroraQueryStores(pool),
 		queriesReady: true,
+		checkpoints:  projector.NewPostgresCheckpoints(pool),
+		transactor:   database.NewPoolTransactor(pool),
 	}, pool.Close, nil
 }
 
@@ -137,6 +149,8 @@ func buildKurrentDeps(ctx context.Context, log logger.Logger) (deps, func(), err
 			codec:        codec,
 			queries:      newMemoryQueryStores(),
 			queriesReady: true,
+			checkpoints:  projector.NewMemoryCheckpoints(),
+			transactor:   projector.NoTransactor{},
 		}, func() { _ = store.Close() }, nil
 	}
 
@@ -154,6 +168,8 @@ func buildKurrentDeps(ctx context.Context, log logger.Logger) (deps, func(), err
 		codec:        codec,
 		queries:      buildAuroraQueryStores(pool),
 		queriesReady: true,
+		checkpoints:  projector.NewPostgresCheckpoints(pool),
+		transactor:   database.NewPoolTransactor(pool),
 	}, func() { pool.Close(); _ = store.Close() }, nil
 }
 
@@ -186,5 +202,7 @@ func buildMemoryDeps(log logger.Logger) (deps, func(), error) {
 		codec:        codec,
 		queries:      q,
 		queriesReady: true,
+		checkpoints:  projector.NewMemoryCheckpoints(),
+		transactor:   projector.NoTransactor{},
 	}, store.Close, nil
 }

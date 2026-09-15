@@ -14,7 +14,7 @@ package projections
 
 import (
 	"context"
-	"log/slog"
+	"fmt"
 	"time"
 
 	"github.com/jordisalazar/money-management/internal/payments/debt/domain"
@@ -99,12 +99,12 @@ func NewProcessesProjector(store ProcessStore) *ProcessesProjector {
 // Handle is idempotent by construction: every row is keyed by (kind, id) taken
 // from the domain, never generated, so replaying the log rebuilds the same
 // rows rather than duplicating them.
-func (p *ProcessesProjector) Handle(event any, _ eventstore.EventMetadata) {
+func (p *ProcessesProjector) Handle(event any, _ eventstore.EventMetadata) error {
 	ctx := context.Background()
 
 	switch e := event.(type) {
 	case transfer.TransferRequested:
-		p.upsert(ctx, &ProcessView{
+		return p.upsert(ctx, &ProcessView{
 			Kind:         KindTransfer,
 			ID:           e.TransferID,
 			UserID:       e.UserID,
@@ -117,20 +117,20 @@ func (p *ProcessesProjector) Handle(event any, _ eventstore.EventMetadata) {
 		})
 
 	case transfer.TransferDebited:
-		p.patch(ctx, KindTransfer, e.TransferID, func(v *ProcessView) {
+		return p.patch(ctx, KindTransfer, e.TransferID, func(v *ProcessView) {
 			v.Status = transfer.StatusDebited
 		})
 
 	case transfer.TransferCompleted:
 		settled := e.CompletedAt
-		p.patch(ctx, KindTransfer, e.TransferID, func(v *ProcessView) {
+		return p.patch(ctx, KindTransfer, e.TransferID, func(v *ProcessView) {
 			v.Status = transfer.StatusCompleted
 			v.SettledAt = &settled
 		})
 
 	case transfer.TransferFailed:
 		settled := e.FailedAt
-		p.patch(ctx, KindTransfer, e.TransferID, func(v *ProcessView) {
+		return p.patch(ctx, KindTransfer, e.TransferID, func(v *ProcessView) {
 			v.Status = transfer.StatusFailed
 			v.Reason = e.Reason
 			v.SettledAt = &settled
@@ -138,21 +138,21 @@ func (p *ProcessesProjector) Handle(event any, _ eventstore.EventMetadata) {
 
 	case transfer.TransferStuck:
 		settled := e.StuckAt
-		p.patch(ctx, KindTransfer, e.TransferID, func(v *ProcessView) {
+		return p.patch(ctx, KindTransfer, e.TransferID, func(v *ProcessView) {
 			v.Status = transfer.StatusStuck
 			v.Reason = e.Reason
 			v.SettledAt = &settled
 		})
 
 	case transfer.TransferRetryAttempted:
-		p.patch(ctx, KindTransfer, e.TransferID, func(v *ProcessView) {
+		return p.patch(ctx, KindTransfer, e.TransferID, func(v *ProcessView) {
 			v.Attempts = e.Attempt
 		})
 
 	// --- occurrence ---
 
 	case occurrence.MovementDue:
-		p.upsert(ctx, &ProcessView{
+		return p.upsert(ctx, &ProcessView{
 			Kind:         KindOccurrence,
 			ID:           e.OccurrenceID,
 			UserID:       e.UserID,
@@ -165,21 +165,21 @@ func (p *ProcessesProjector) Handle(event any, _ eventstore.EventMetadata) {
 
 	case occurrence.MovementExecuted:
 		settled := e.ExecutedAt
-		p.patch(ctx, KindOccurrence, e.OccurrenceID, func(v *ProcessView) {
+		return p.patch(ctx, KindOccurrence, e.OccurrenceID, func(v *ProcessView) {
 			v.Status = occurrence.StatusExecuted
 			v.SettledAt = &settled
 		})
 
 	case occurrence.MovementSkipped:
 		settled := e.SkippedAt
-		p.patch(ctx, KindOccurrence, e.OccurrenceID, func(v *ProcessView) {
+		return p.patch(ctx, KindOccurrence, e.OccurrenceID, func(v *ProcessView) {
 			v.Status = occurrence.StatusSkipped
 			v.Reason = e.Reason
 			v.SettledAt = &settled
 		})
 
 	case occurrence.MovementRetryAttempted:
-		p.patch(ctx, KindOccurrence, e.OccurrenceID, func(v *ProcessView) {
+		return p.patch(ctx, KindOccurrence, e.OccurrenceID, func(v *ProcessView) {
 			v.Attempts = e.Attempt
 		})
 
@@ -190,38 +190,38 @@ func (p *ProcessesProjector) Handle(event any, _ eventstore.EventMetadata) {
 	// attempt, and re-opening one clears the previous outcome.
 
 	case debt.DebtSettlementRequested:
-		p.reopen(ctx, KindDebtSettlement, e.DebtID, e.RequestedBy, e.RequestedAt)
+		return p.reopen(ctx, KindDebtSettlement, e.DebtID, e.RequestedBy, e.RequestedAt)
 
 	case debt.DebtSettled:
 		settled := e.SettledAt
-		p.patch(ctx, KindDebtSettlement, e.DebtID, func(v *ProcessView) {
+		return p.patch(ctx, KindDebtSettlement, e.DebtID, func(v *ProcessView) {
 			v.Status = statusSettled
 			v.SettledAt = &settled
 		})
 
 	case debt.DebtSettlementFailed:
 		settled := e.FailedAt
-		p.patch(ctx, KindDebtSettlement, e.DebtID, func(v *ProcessView) {
+		return p.patch(ctx, KindDebtSettlement, e.DebtID, func(v *ProcessView) {
 			v.Status = statusSettlementFailed
 			v.Reason = e.Reason
 			v.SettledAt = &settled
 		})
 
 	case debt.DebtSettlementRetryAttempted:
-		p.patch(ctx, KindDebtSettlement, e.DebtID, func(v *ProcessView) {
+		return p.patch(ctx, KindDebtSettlement, e.DebtID, func(v *ProcessView) {
 			v.Attempts = e.Attempt
 		})
 	}
+	return nil
 }
 
 // reopen starts a fresh attempt on a process whose row may already exist from
 // an earlier, failed one. The previous outcome is cleared, or the row would
 // still read as settled and the sweeper would never look at it again.
-func (p *ProcessesProjector) reopen(ctx context.Context, kind, id, userID string, at time.Time) {
+func (p *ProcessesProjector) reopen(ctx context.Context, kind, id, userID string, at time.Time) error {
 	existing, err := p.store.Get(ctx, kind, id)
 	if err != nil {
-		slog.Error("processes projector: read failed", "kind", kind, "id", id, "error", err)
-		return
+		return fmt.Errorf("reading %s %s: %w", kind, id, err)
 	}
 
 	view := &ProcessView{Kind: kind, ID: id, UserID: userID, RequestedAt: at}
@@ -235,30 +235,27 @@ func (p *ProcessesProjector) reopen(ctx context.Context, kind, id, userID string
 	view.SettledAt = nil
 	view.Attempts = 0
 
-	p.upsert(ctx, view)
+	return p.upsert(ctx, view)
 }
 
-func (p *ProcessesProjector) upsert(ctx context.Context, view *ProcessView) {
+func (p *ProcessesProjector) upsert(ctx context.Context, view *ProcessView) error {
 	if err := p.store.Upsert(ctx, view); err != nil {
-		slog.Error("processes projector: upsert failed",
-			"kind", view.Kind, "id", view.ID, "error", err)
+		return fmt.Errorf("upserting %s %s: %w", view.Kind, view.ID, err)
 	}
+	return nil
 }
 
 // patch reads the row, applies a change, and writes it back. A missing row is
 // logged rather than ignored: it means an event arrived for a process whose
 // opening event this projection never saw, which is a real ordering fault.
-func (p *ProcessesProjector) patch(ctx context.Context, kind, id string, fn func(*ProcessView)) {
+func (p *ProcessesProjector) patch(ctx context.Context, kind, id string, fn func(*ProcessView)) error {
 	view, err := p.store.Get(ctx, kind, id)
 	if err != nil {
-		slog.Error("processes projector: read failed", "kind", kind, "id", id, "error", err)
-		return
+		return fmt.Errorf("reading %s %s: %w", kind, id, err)
 	}
 	if view == nil {
-		slog.Error("processes projector: no row to update — the opening event was never projected",
-			"kind", kind, "id", id)
-		return
+		return fmt.Errorf("processes projector: no %s row for %s — its opening event was never projected", kind, id)
 	}
 	fn(view)
-	p.upsert(ctx, view)
+	return p.upsert(ctx, view)
 }

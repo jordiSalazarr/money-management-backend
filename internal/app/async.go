@@ -76,25 +76,33 @@ func RunAsync(ctx context.Context, log logger.Logger, d deps, opts AsyncOptions)
 	ctx, cancel := context.WithCancel(ctx)
 	var wg sync.WaitGroup
 
-	dispatcher := projector.NewDispatcher(d.codec, slog.Default())
-	subscribeProjections(dispatcher, d.queries)
+	// One subscription per projection, each resuming from its own checkpoint
+	// (ADR 0003). They advance independently, so one falling behind or being
+	// rebuilt does not hold up the others.
+	for _, def := range projectionDefs(d.queries) {
+		runner := projector.NewRunner(def, d.feed, d.codec, d.checkpoints, d.transactor, slog.Default())
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if err := runner.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+				log.Error("async: projection stopped", "projection", runner.Name(), "err", err)
+			}
+		}()
+	}
 
+	// The reactor gets its own subscription too. It reads from the start of
+	// the log rather than a checkpoint: processes are idempotent by
+	// construction, so replaying is safe, and in phase 3 the deployed reactor
+	// moves to a persistent subscription where KurrentDB owns the position.
 	router := buildReactorRouter(d.store, d.codec)
-
-	// One subscription drives both. Projections run first so that when a
-	// reactor appends a new event, the read model already reflects everything
-	// that led to it.
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
 		err := d.feed.SubscribeAll(ctx, eventstore.Start, func(rec eventstore.Recorded) error {
-			if err := dispatcher.Handle(rec); err != nil {
-				return err
-			}
 			return router.Handle(ctx, rec)
 		})
 		if err != nil && !errors.Is(err, context.Canceled) {
-			log.Error("async: subscription stopped", "err", err)
+			log.Error("async: reactor stopped", "err", err)
 		}
 	}()
 

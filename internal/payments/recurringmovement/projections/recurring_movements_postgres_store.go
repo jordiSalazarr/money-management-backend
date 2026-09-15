@@ -2,21 +2,23 @@ package projections
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"github.com/jackc/pgx/v5"
 
-	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jordisalazar/money-management/internal/shared/database"
 )
 
 type PostgresRecurringMovementStore struct {
-	pool *pgxpool.Pool
+	db database.DBTX
 }
 
-func NewPostgresRecurringMovementStore(pool *pgxpool.Pool) *PostgresRecurringMovementStore {
-	return &PostgresRecurringMovementStore{pool: pool}
+func NewPostgresRecurringMovementStore(db database.DBTX) *PostgresRecurringMovementStore {
+	return &PostgresRecurringMovementStore{db: db}
 }
 
 func (s *PostgresRecurringMovementStore) Upsert(ctx context.Context, view *RecurringMovementView) error {
-	_, err := s.pool.Exec(ctx, `
+	_, err := s.db.Exec(ctx, `
 		INSERT INTO recurring_movements_view (id, wallet_id, user_id, type, amount, currency, frequency, reason, start_date, end_date, next_due_date, active, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)
 		ON CONFLICT (id) DO UPDATE SET
@@ -50,7 +52,7 @@ func (s *PostgresRecurringMovementStore) List(ctx context.Context, filter Recurr
 
 	query += " ORDER BY next_due_date ASC"
 
-	rows, err := s.pool.Query(ctx, query, args...)
+	rows, err := s.db.Query(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -69,4 +71,22 @@ func (s *PostgresRecurringMovementStore) List(ctx context.Context, filter Recurr
 		result = append(result, v)
 	}
 	return result, rows.Err()
+}
+
+func (s *PostgresRecurringMovementStore) Get(ctx context.Context, id string) (*RecurringMovementView, error) {
+	row := s.db.QueryRow(ctx, `
+		SELECT id, wallet_id, user_id, type, amount, currency, frequency, reason,
+		       start_date, end_date, next_due_date, active, created_at
+		FROM recurring_movements_view WHERE id = $1`, id)
+
+	var v RecurringMovementView
+	err := row.Scan(&v.ID, &v.WalletID, &v.UserID, &v.Type, &v.Amount, &v.Currency,
+		&v.Frequency, &v.Reason, &v.StartDate, &v.EndDate, &v.NextDueDate, &v.Active, &v.CreatedAt)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, fmt.Errorf("reading recurring movement %s: %w", id, err)
+	}
+	return &v, nil
 }
