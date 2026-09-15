@@ -15,61 +15,63 @@ const docTemplate = `{
     "host": "{{.Host}}",
     "basePath": "{{.BasePath}}",
     "paths": {
-        "/auth/login": {
-            "post": {
-                "description": "Authenticates with email and password, returns a JWT bearer token valid for 24 hours.",
-                "consumes": [
-                    "application/json"
+        "/debts": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
                 ],
+                "description": "Returns debts for the authenticated user. Filterable by wallet_id, direction, and status.",
                 "produces": [
                     "application/json"
                 ],
                 "tags": [
-                    "Auth"
+                    "Debts"
                 ],
-                "summary": "Login",
+                "summary": "List debts",
                 "parameters": [
                     {
-                        "description": "Login payload",
-                        "name": "body",
-                        "in": "body",
-                        "required": true,
-                        "schema": {
-                            "$ref": "#/definitions/login.Request"
-                        }
+                        "type": "string",
+                        "description": "Filter by wallet ID",
+                        "name": "wallet_id",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by direction (IN or OUT)",
+                        "name": "direction",
+                        "in": "query"
+                    },
+                    {
+                        "type": "string",
+                        "description": "Filter by status (created)",
+                        "name": "status",
+                        "in": "query"
                     }
                 ],
                 "responses": {
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/login.Response"
-                        }
-                    },
-                    "400": {
-                        "description": "invalid_request",
-                        "schema": {
-                            "$ref": "#/definitions/login.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_debt_slices_getdebts.Response"
                         }
                     },
                     "401": {
-                        "description": "invalid_credentials",
+                        "description": "unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/login.ErrorResponse"
-                        }
-                    },
-                    "500": {
-                        "description": "internal_error",
-                        "schema": {
-                            "$ref": "#/definitions/login.ErrorResponse"
+                            "type": "object"
                         }
                     }
                 }
-            }
-        },
-        "/auth/register": {
+            },
             "post": {
-                "description": "Creates a new user account with email and password. Password must be at least 8 characters.",
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Records a new debt (someone owes you or you owe someone). Amount in integer cents.",
                 "consumes": [
                     "application/json"
                 ],
@@ -77,17 +79,17 @@ const docTemplate = `{
                     "application/json"
                 ],
                 "tags": [
-                    "Auth"
+                    "Debts"
                 ],
-                "summary": "Register a new user",
+                "summary": "Record a debt",
                 "parameters": [
                     {
-                        "description": "Registration payload",
+                        "description": "Debt recording payload",
                         "name": "body",
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/register.Request"
+                            "$ref": "#/definitions/internal_payments_debt_slices_recorddebt.Request"
                         }
                     }
                 ],
@@ -95,25 +97,95 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/register.Response"
+                            "$ref": "#/definitions/internal_payments_debt_slices_recorddebt.Response"
                         }
                     },
                     "400": {
-                        "description": "Validation error (missing_email, password_too_short)",
+                        "description": "Validation error (invalid_amount, invalid_currency, invalid_direction, missing_reason)",
                         "schema": {
-                            "$ref": "#/definitions/register.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_debt_slices_recorddebt.ErrorResponse"
                         }
                     },
-                    "409": {
-                        "description": "email_taken",
+                    "401": {
+                        "description": "unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/register.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_debt_slices_recorddebt.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "internal_error",
                         "schema": {
-                            "$ref": "#/definitions/register.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_debt_slices_recorddebt.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/debts/{id}/settle": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Marks a debt as settled and triggers a wallet deposit or withdrawal via outbox.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Debts"
+                ],
+                "summary": "Settle a debt",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Debt ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Settle payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_debt_slices_settledebt.Request"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_debt_slices_settledebt.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation error (missing_settled_by, debt_already_settled)",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_debt_slices_settledebt.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_debt_slices_settledebt.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "debt_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_debt_slices_settledebt.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "internal_error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_debt_slices_settledebt.ErrorResponse"
                         }
                     }
                 }
@@ -138,13 +210,139 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/getusermovements.Response"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_getusermovements.Response"
                         }
                     },
                     "401": {
                         "description": "unauthorized",
                         "schema": {
                             "type": "object"
+                        }
+                    }
+                }
+            }
+        },
+        "/recurring-movements": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Creates a recurring deposit or withdrawal on a wallet. Amount in integer cents.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "RecurringMovements"
+                ],
+                "summary": "Record a recurring movement",
+                "parameters": [
+                    {
+                        "description": "Recurring movement payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_recurringmovement_slices_recordrecurringmovement.Request"
+                        }
+                    }
+                ],
+                "responses": {
+                    "201": {
+                        "description": "Created",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_recurringmovement_slices_recordrecurringmovement.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "Validation error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_recurringmovement_slices_recordrecurringmovement.ErrorResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_recurringmovement_slices_recordrecurringmovement.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "internal_error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_recurringmovement_slices_recordrecurringmovement.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/recurring-movements/{id}/stop": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Stops an active recurring movement so it will no longer be executed.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "RecurringMovements"
+                ],
+                "summary": "Stop a recurring movement",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Recurring movement ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Optional reason",
+                        "name": "body",
+                        "in": "body",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_recurringmovement_slices_stoprecurringmovement.Request"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_recurringmovement_slices_stoprecurringmovement.Response"
+                        }
+                    },
+                    "400": {
+                        "description": "not_active",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_recurringmovement_slices_stoprecurringmovement.ErrorResponse"
+                        }
+                    },
+                    "403": {
+                        "description": "not_owner",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_recurringmovement_slices_stoprecurringmovement.ErrorResponse"
+                        }
+                    },
+                    "404": {
+                        "description": "recurring_movement_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_recurringmovement_slices_stoprecurringmovement.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "internal_error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_recurringmovement_slices_stoprecurringmovement.ErrorResponse"
                         }
                     }
                 }
@@ -157,7 +355,7 @@ const docTemplate = `{
                         "BearerAuth": []
                     }
                 ],
-                "description": "Transfers money from one wallet to another atomically. Both wallets must exist, share the same currency, and the source must have sufficient funds. Amount is in integer cents.",
+                "description": "Requests a move of money between two wallets and returns immediately with 202. The transfer is carried out asynchronously in two steps and may still fail; poll GET /transfers/{id} for the outcome. A failed transfer moves no money. Amount is in integer cents.",
                 "consumes": [
                     "application/json"
                 ],
@@ -167,7 +365,7 @@ const docTemplate = `{
                 "tags": [
                     "Transfers"
                 ],
-                "summary": "Transfer money",
+                "summary": "Request a transfer",
                 "parameters": [
                     {
                         "description": "Transfer payload",
@@ -175,45 +373,197 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/transfermoney.Request"
+                            "$ref": "#/definitions/internal_payments_processes_transfer_slices_requesttransfer.Request"
                         }
                     }
                 ],
                 "responses": {
-                    "201": {
-                        "description": "Created",
+                    "202": {
+                        "description": "Accepted",
                         "schema": {
-                            "$ref": "#/definitions/transfermoney.Response"
+                            "$ref": "#/definitions/internal_payments_processes_transfer_slices_requesttransfer.Response"
                         }
                     },
                     "400": {
                         "description": "Validation error (invalid_amount, same_wallet, currency_mismatch, insufficient_funds)",
                         "schema": {
-                            "$ref": "#/definitions/transfermoney.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_processes_transfer_slices_requesttransfer.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/transfermoney.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_processes_transfer_slices_requesttransfer.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "wallet_not_found",
                         "schema": {
-                            "$ref": "#/definitions/transfermoney.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_processes_transfer_slices_requesttransfer.ErrorResponse"
                         }
                     },
                     "409": {
-                        "description": "concurrency_conflict",
+                        "description": "wallet_disabled",
                         "schema": {
-                            "$ref": "#/definitions/transfermoney.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_processes_transfer_slices_requesttransfer.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "internal_error",
                         "schema": {
-                            "$ref": "#/definitions/transfermoney.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_processes_transfer_slices_requesttransfer.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/transfers/{id}": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Reports where a transfer got to. \"requested\" and \"debited\" are in flight; \"completed\", \"failed\" and \"stuck\" are final. A failed transfer moved no money. A stuck transfer moved money that could not be returned, and needs intervention.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Transfers"
+                ],
+                "summary": "Get a transfer",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Transfer ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_processes_transfer_slices_gettransfer.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "transfer_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_processes_transfer_slices_gettransfer.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "internal_error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_processes_transfer_slices_gettransfer.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/voice/audio": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Accepts a WAV (PCM 16-bit mono) clip, transcribes it via AWS Transcribe, then interprets and executes the command.",
+                "consumes": [
+                    "multipart/form-data"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "voice"
+                ],
+                "summary": "Process a spoken voice command",
+                "parameters": [
+                    {
+                        "type": "file",
+                        "description": "WAV audio (PCM 16-bit mono)",
+                        "name": "audio",
+                        "in": "formData",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_voice.voiceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_voice.voiceResponse"
+                        }
+                    },
+                    "401": {
+                        "description": "Unauthorized",
+                        "schema": {
+                            "$ref": "#/definitions/internal_voice.voiceResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_voice.voiceResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/voice/command": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Interprets natural-language text and executes the corresponding action. Used by the typed-input path; the speech path posts audio to /voice/audio instead.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "voice"
+                ],
+                "summary": "Process a typed voice command",
+                "parameters": [
+                    {
+                        "description": "Voice command",
+                        "name": "request",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_voice.voiceRequest"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_voice.voiceResponse"
+                        }
+                    },
+                    "400": {
+                        "description": "Bad Request",
+                        "schema": {
+                            "$ref": "#/definitions/internal_voice.voiceResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "Internal Server Error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_voice.voiceResponse"
                         }
                     }
                 }
@@ -238,7 +588,7 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/getuserwallets.Response"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_getuserwallets.Response"
                         }
                     },
                     "401": {
@@ -273,7 +623,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/addwallet.Request"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_addwallet.Request"
                         }
                     }
                 ],
@@ -281,31 +631,31 @@ const docTemplate = `{
                     "201": {
                         "description": "Created",
                         "schema": {
-                            "$ref": "#/definitions/addwallet.Response"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_addwallet.Response"
                         }
                     },
                     "400": {
                         "description": "Validation error (missing_name, invalid_initial_amount, invalid_currency, invalid_category)",
                         "schema": {
-                            "$ref": "#/definitions/addwallet.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_addwallet.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/addwallet.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_addwallet.ErrorResponse"
                         }
                     },
                     "409": {
                         "description": "max_wallets_reached",
                         "schema": {
-                            "$ref": "#/definitions/addwallet.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_addwallet.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "internal_error",
                         "schema": {
-                            "$ref": "#/definitions/addwallet.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_addwallet.ErrorResponse"
                         }
                     }
                 }
@@ -343,7 +693,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/depositmoney.Request"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_depositmoney.Request"
                         }
                     }
                 ],
@@ -351,31 +701,95 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/depositmoney.Response"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_depositmoney.Response"
                         }
                     },
                     "400": {
                         "description": "Validation error (invalid_amount, currency_mismatch)",
                         "schema": {
-                            "$ref": "#/definitions/depositmoney.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_depositmoney.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/depositmoney.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_depositmoney.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "wallet_not_found",
                         "schema": {
-                            "$ref": "#/definitions/depositmoney.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_depositmoney.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "internal_error",
                         "schema": {
-                            "$ref": "#/definitions/depositmoney.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_depositmoney.ErrorResponse"
+                        }
+                    }
+                }
+            }
+        },
+        "/wallets/{id}/disable": {
+            "post": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Disables a wallet, preventing any further deposits, withdrawals, or transfers. The wallet remains visible in queries.",
+                "consumes": [
+                    "application/json"
+                ],
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "Wallets"
+                ],
+                "summary": "Disable wallet",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Wallet ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    },
+                    {
+                        "description": "Disable payload",
+                        "name": "body",
+                        "in": "body",
+                        "required": true,
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_wallet_slices_disablewallet.Request"
+                        }
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_wallet_slices_disablewallet.Response"
+                        }
+                    },
+                    "404": {
+                        "description": "wallet_not_found",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_wallet_slices_disablewallet.ErrorResponse"
+                        }
+                    },
+                    "409": {
+                        "description": "wallet_already_disabled",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_wallet_slices_disablewallet.ErrorResponse"
+                        }
+                    },
+                    "500": {
+                        "description": "internal_error",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_wallet_slices_disablewallet.ErrorResponse"
                         }
                     }
                 }
@@ -409,7 +823,47 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/getwalletmovements.Response"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_getwalletmovements.Response"
+                        }
+                    },
+                    "401": {
+                        "description": "unauthorized",
+                        "schema": {
+                            "type": "object"
+                        }
+                    }
+                }
+            }
+        },
+        "/wallets/{id}/recurring-movements": {
+            "get": {
+                "security": [
+                    {
+                        "BearerAuth": []
+                    }
+                ],
+                "description": "Returns all recurring movements (active and inactive) for a wallet, ordered by created_at descending.",
+                "produces": [
+                    "application/json"
+                ],
+                "tags": [
+                    "RecurringMovements"
+                ],
+                "summary": "List wallet recurring movements",
+                "parameters": [
+                    {
+                        "type": "string",
+                        "description": "Wallet ID",
+                        "name": "id",
+                        "in": "path",
+                        "required": true
+                    }
+                ],
+                "responses": {
+                    "200": {
+                        "description": "OK",
+                        "schema": {
+                            "$ref": "#/definitions/internal_payments_recurringmovement_slices_getrecurringmovements.Response"
                         }
                     },
                     "401": {
@@ -453,7 +907,7 @@ const docTemplate = `{
                         "in": "body",
                         "required": true,
                         "schema": {
-                            "$ref": "#/definitions/withdrawmoney.Request"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_withdrawmoney.Request"
                         }
                     }
                 ],
@@ -461,31 +915,31 @@ const docTemplate = `{
                     "200": {
                         "description": "OK",
                         "schema": {
-                            "$ref": "#/definitions/withdrawmoney.Response"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_withdrawmoney.Response"
                         }
                     },
                     "400": {
                         "description": "Validation error (invalid_amount, currency_mismatch, invalid_category, insufficient_funds)",
                         "schema": {
-                            "$ref": "#/definitions/withdrawmoney.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_withdrawmoney.ErrorResponse"
                         }
                     },
                     "401": {
                         "description": "unauthorized",
                         "schema": {
-                            "$ref": "#/definitions/withdrawmoney.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_withdrawmoney.ErrorResponse"
                         }
                     },
                     "404": {
                         "description": "wallet_not_found",
                         "schema": {
-                            "$ref": "#/definitions/withdrawmoney.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_withdrawmoney.ErrorResponse"
                         }
                     },
                     "500": {
                         "description": "internal_error",
                         "schema": {
-                            "$ref": "#/definitions/withdrawmoney.ErrorResponse"
+                            "$ref": "#/definitions/internal_payments_wallet_slices_withdrawmoney.ErrorResponse"
                         }
                     }
                 }
@@ -493,7 +947,478 @@ const docTemplate = `{
         }
     },
     "definitions": {
-        "addwallet.ErrorResponse": {
+        "github_com_jordisalazar_money-management_internal_payments_debt_projections.DebtView": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "example": 1000
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-04-28T12:00:00Z"
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "EUR"
+                },
+                "direction": {
+                    "type": "string",
+                    "example": "IN"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "owner_id": {
+                    "type": "string",
+                    "example": "user-123"
+                },
+                "reason": {
+                    "type": "string",
+                    "example": "Dinner split"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "created"
+                },
+                "wallet_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "github_com_jordisalazar_money-management_internal_payments_recurringmovement_projections.RecurringMovementView": {
+            "type": "object",
+            "properties": {
+                "active": {
+                    "type": "boolean"
+                },
+                "amount": {
+                    "type": "integer"
+                },
+                "created_at": {
+                    "type": "string"
+                },
+                "currency": {
+                    "type": "string"
+                },
+                "end_date": {
+                    "type": "string"
+                },
+                "frequency": {
+                    "type": "string"
+                },
+                "id": {
+                    "type": "string"
+                },
+                "next_due_date": {
+                    "type": "string"
+                },
+                "reason": {
+                    "type": "string"
+                },
+                "start_date": {
+                    "type": "string"
+                },
+                "type": {
+                    "type": "string"
+                },
+                "user_id": {
+                    "type": "string"
+                },
+                "wallet_id": {
+                    "type": "string"
+                }
+            }
+        },
+        "github_com_jordisalazar_money-management_internal_payments_wallet_projections.MovementView": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "example": 5000
+                },
+                "category": {
+                    "type": "string",
+                    "example": "food"
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "EUR"
+                },
+                "id": {
+                    "type": "string",
+                    "example": "880e8400-e29b-41d4-a716-446655440000"
+                },
+                "occurred_at": {
+                    "type": "string",
+                    "example": "2026-04-26T12:30:00Z"
+                },
+                "reason": {
+                    "type": "string",
+                    "example": "Salary"
+                },
+                "type": {
+                    "type": "string",
+                    "enum": [
+                        "deposit",
+                        "withdrawal",
+                        "refund"
+                    ],
+                    "example": "deposit"
+                },
+                "wallet_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "github_com_jordisalazar_money-management_internal_payments_wallet_projections.WalletView": {
+            "type": "object",
+            "properties": {
+                "category": {
+                    "type": "string",
+                    "example": "savings"
+                },
+                "created_at": {
+                    "type": "string",
+                    "example": "2026-04-26T10:00:00Z"
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "EUR"
+                },
+                "current_balance": {
+                    "type": "integer",
+                    "example": 15000
+                },
+                "description": {
+                    "type": "string",
+                    "example": "My savings wallet"
+                },
+                "disabled": {
+                    "type": "boolean",
+                    "example": false
+                },
+                "id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "last_movement_at": {
+                    "type": "string",
+                    "example": "2026-04-26T12:30:00Z"
+                },
+                "name": {
+                    "type": "string",
+                    "example": "Savings"
+                },
+                "user_id": {
+                    "type": "string",
+                    "example": "user-123"
+                }
+            }
+        },
+        "internal_payments_debt_slices_getdebts.Response": {
+            "type": "object",
+            "properties": {
+                "debts": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_jordisalazar_money-management_internal_payments_debt_projections.DebtView"
+                    }
+                }
+            }
+        },
+        "internal_payments_debt_slices_recorddebt.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error_code": {
+                    "type": "string",
+                    "example": "invalid_amount"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "amount must be between 1 and 10000000"
+                }
+            }
+        },
+        "internal_payments_debt_slices_recorddebt.Request": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "example": 1000
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "EUR"
+                },
+                "direction": {
+                    "type": "string",
+                    "example": "IN"
+                },
+                "reason": {
+                    "type": "string",
+                    "example": "Dinner split"
+                },
+                "wallet_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "internal_payments_debt_slices_recorddebt.Response": {
+            "type": "object",
+            "properties": {
+                "debt_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "internal_payments_debt_slices_settledebt.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error_code": {
+                    "type": "string",
+                    "example": "debt_already_settled"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "debt is already settled"
+                }
+            }
+        },
+        "internal_payments_debt_slices_settledebt.Request": {
+            "type": "object",
+            "properties": {
+                "settled_by": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "internal_payments_debt_slices_settledebt.Response": {
+            "type": "object",
+            "properties": {
+                "debt_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "settled"
+                }
+            }
+        },
+        "internal_payments_processes_transfer_slices_gettransfer.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error_code": {
+                    "type": "string",
+                    "example": "transfer_not_found"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "transfer not found"
+                }
+            }
+        },
+        "internal_payments_processes_transfer_slices_gettransfer.Response": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "example": 3000
+                },
+                "attempts": {
+                    "type": "integer",
+                    "example": 0
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "EUR"
+                },
+                "failure_reason": {
+                    "description": "FailureReason is set only for failed and stuck transfers.",
+                    "type": "string",
+                    "example": "insufficient_funds"
+                },
+                "from_wallet_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "reason": {
+                    "type": "string",
+                    "example": "Rent split"
+                },
+                "status": {
+                    "type": "string",
+                    "example": "failed"
+                },
+                "to_wallet_id": {
+                    "type": "string",
+                    "example": "660e8400-e29b-41d4-a716-446655440000"
+                },
+                "transfer_id": {
+                    "type": "string",
+                    "example": "770e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "internal_payments_processes_transfer_slices_requesttransfer.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error_code": {
+                    "type": "string",
+                    "example": "same_wallet"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "source and destination wallet must differ"
+                }
+            }
+        },
+        "internal_payments_processes_transfer_slices_requesttransfer.Request": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "example": 3000
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "EUR"
+                },
+                "from_wallet_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                },
+                "reason": {
+                    "type": "string",
+                    "example": "Rent split"
+                },
+                "to_wallet_id": {
+                    "type": "string",
+                    "example": "660e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "internal_payments_processes_transfer_slices_requesttransfer.Response": {
+            "type": "object",
+            "properties": {
+                "status": {
+                    "type": "string",
+                    "example": "requested"
+                },
+                "transfer_id": {
+                    "type": "string",
+                    "example": "770e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "internal_payments_recurringmovement_slices_getrecurringmovements.Response": {
+            "type": "object",
+            "properties": {
+                "recurring_movements": {
+                    "type": "array",
+                    "items": {
+                        "$ref": "#/definitions/github_com_jordisalazar_money-management_internal_payments_recurringmovement_projections.RecurringMovementView"
+                    }
+                }
+            }
+        },
+        "internal_payments_recurringmovement_slices_recordrecurringmovement.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error_code": {
+                    "type": "string",
+                    "example": "invalid_amount"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "amount must be between 1 and 10000000"
+                }
+            }
+        },
+        "internal_payments_recurringmovement_slices_recordrecurringmovement.Request": {
+            "type": "object",
+            "properties": {
+                "amount": {
+                    "type": "integer",
+                    "example": 1000
+                },
+                "currency": {
+                    "type": "string",
+                    "example": "EUR"
+                },
+                "end_date": {
+                    "type": "string",
+                    "example": "2027-05-01"
+                },
+                "frequency": {
+                    "type": "string",
+                    "example": "MONTHLY"
+                },
+                "reason": {
+                    "type": "string",
+                    "example": "Salary"
+                },
+                "start_date": {
+                    "type": "string",
+                    "example": "2026-05-01"
+                },
+                "type": {
+                    "type": "string",
+                    "example": "deposit"
+                },
+                "wallet_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "internal_payments_recurringmovement_slices_recordrecurringmovement.Response": {
+            "type": "object",
+            "properties": {
+                "recurring_movement_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "internal_payments_recurringmovement_slices_stoprecurringmovement.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error_code": {
+                    "type": "string"
+                },
+                "message": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_payments_recurringmovement_slices_stoprecurringmovement.Request": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_payments_recurringmovement_slices_stoprecurringmovement.Response": {
+            "type": "object",
+            "properties": {
+                "recurring_movement_id": {
+                    "type": "string"
+                },
+                "stopped_at": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_payments_wallet_slices_addwallet.ErrorResponse": {
             "type": "object",
             "properties": {
                 "error_code": {
@@ -506,7 +1431,7 @@ const docTemplate = `{
                 }
             }
         },
-        "addwallet.Request": {
+        "internal_payments_wallet_slices_addwallet.Request": {
             "type": "object",
             "properties": {
                 "category": {
@@ -531,7 +1456,7 @@ const docTemplate = `{
                 }
             }
         },
-        "addwallet.Response": {
+        "internal_payments_wallet_slices_addwallet.Response": {
             "type": "object",
             "properties": {
                 "wallet_id": {
@@ -540,48 +1465,7 @@ const docTemplate = `{
                 }
             }
         },
-        "addwallet.WalletView": {
-            "type": "object",
-            "properties": {
-                "category": {
-                    "type": "string",
-                    "example": "savings"
-                },
-                "created_at": {
-                    "type": "string",
-                    "example": "2026-04-26T10:00:00Z"
-                },
-                "currency": {
-                    "type": "string",
-                    "example": "EUR"
-                },
-                "current_balance": {
-                    "type": "integer",
-                    "example": 15000
-                },
-                "description": {
-                    "type": "string",
-                    "example": "My savings wallet"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "550e8400-e29b-41d4-a716-446655440000"
-                },
-                "last_movement_at": {
-                    "type": "string",
-                    "example": "2026-04-26T12:30:00Z"
-                },
-                "name": {
-                    "type": "string",
-                    "example": "Savings"
-                },
-                "user_id": {
-                    "type": "string",
-                    "example": "user-123"
-                }
-            }
-        },
-        "depositmoney.ErrorResponse": {
+        "internal_payments_wallet_slices_depositmoney.ErrorResponse": {
             "type": "object",
             "properties": {
                 "error_code": {
@@ -594,12 +1478,16 @@ const docTemplate = `{
                 }
             }
         },
-        "depositmoney.Request": {
+        "internal_payments_wallet_slices_depositmoney.Request": {
             "type": "object",
             "properties": {
                 "amount": {
                     "type": "integer",
                     "example": 5000
+                },
+                "category": {
+                    "type": "string",
+                    "example": "Salary"
                 },
                 "currency": {
                     "type": "string",
@@ -611,7 +1499,7 @@ const docTemplate = `{
                 }
             }
         },
-        "depositmoney.Response": {
+        "internal_payments_wallet_slices_depositmoney.Response": {
             "type": "object",
             "properties": {
                 "new_balance": {
@@ -624,18 +1512,49 @@ const docTemplate = `{
                 }
             }
         },
-        "getusermovements.Response": {
+        "internal_payments_wallet_slices_disablewallet.ErrorResponse": {
+            "type": "object",
+            "properties": {
+                "error_code": {
+                    "type": "string",
+                    "example": "wallet_already_disabled"
+                },
+                "message": {
+                    "type": "string",
+                    "example": "wallet is already disabled"
+                }
+            }
+        },
+        "internal_payments_wallet_slices_disablewallet.Request": {
+            "type": "object",
+            "properties": {
+                "reason": {
+                    "type": "string",
+                    "example": "No longer needed"
+                }
+            }
+        },
+        "internal_payments_wallet_slices_disablewallet.Response": {
+            "type": "object",
+            "properties": {
+                "wallet_id": {
+                    "type": "string",
+                    "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "internal_payments_wallet_slices_getusermovements.Response": {
             "type": "object",
             "properties": {
                 "movements": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/getusermovements.UserMovementView"
+                        "$ref": "#/definitions/internal_payments_wallet_slices_getusermovements.UserMovementView"
                     }
                 }
             }
         },
-        "getusermovements.UserMovementView": {
+        "internal_payments_wallet_slices_getusermovements.UserMovementView": {
             "type": "object",
             "properties": {
                 "amount": {
@@ -682,193 +1601,29 @@ const docTemplate = `{
                 }
             }
         },
-        "getuserwallets.Response": {
+        "internal_payments_wallet_slices_getuserwallets.Response": {
             "type": "object",
             "properties": {
                 "wallets": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/addwallet.WalletView"
+                        "$ref": "#/definitions/github_com_jordisalazar_money-management_internal_payments_wallet_projections.WalletView"
                     }
                 }
             }
         },
-        "getwalletmovements.MovementView": {
-            "type": "object",
-            "properties": {
-                "amount": {
-                    "type": "integer",
-                    "example": 5000
-                },
-                "category": {
-                    "type": "string",
-                    "example": "food"
-                },
-                "currency": {
-                    "type": "string",
-                    "example": "EUR"
-                },
-                "id": {
-                    "type": "string",
-                    "example": "880e8400-e29b-41d4-a716-446655440000"
-                },
-                "occurred_at": {
-                    "type": "string",
-                    "example": "2026-04-26T12:30:00Z"
-                },
-                "reason": {
-                    "type": "string",
-                    "example": "Salary"
-                },
-                "type": {
-                    "type": "string",
-                    "enum": [
-                        "deposit",
-                        "withdrawal",
-                        "transfer_in",
-                        "transfer_out"
-                    ],
-                    "example": "deposit"
-                },
-                "wallet_id": {
-                    "type": "string",
-                    "example": "550e8400-e29b-41d4-a716-446655440000"
-                }
-            }
-        },
-        "getwalletmovements.Response": {
+        "internal_payments_wallet_slices_getwalletmovements.Response": {
             "type": "object",
             "properties": {
                 "movements": {
                     "type": "array",
                     "items": {
-                        "$ref": "#/definitions/getwalletmovements.MovementView"
+                        "$ref": "#/definitions/github_com_jordisalazar_money-management_internal_payments_wallet_projections.MovementView"
                     }
                 }
             }
         },
-        "login.ErrorResponse": {
-            "type": "object",
-            "properties": {
-                "error_code": {
-                    "type": "string",
-                    "example": "invalid_credentials"
-                },
-                "message": {
-                    "type": "string",
-                    "example": "invalid email or password"
-                }
-            }
-        },
-        "login.Request": {
-            "type": "object",
-            "properties": {
-                "email": {
-                    "type": "string",
-                    "example": "user@example.com"
-                },
-                "password": {
-                    "type": "string",
-                    "example": "securepass123"
-                }
-            }
-        },
-        "login.Response": {
-            "type": "object",
-            "properties": {
-                "token": {
-                    "type": "string",
-                    "example": "eyJhbGciOiJIUzI1NiIs..."
-                },
-                "user_id": {
-                    "type": "string",
-                    "example": "550e8400-e29b-41d4-a716-446655440000"
-                }
-            }
-        },
-        "register.ErrorResponse": {
-            "type": "object",
-            "properties": {
-                "error_code": {
-                    "type": "string",
-                    "example": "email_taken"
-                },
-                "message": {
-                    "type": "string",
-                    "example": "email is already registered"
-                }
-            }
-        },
-        "register.Request": {
-            "type": "object",
-            "properties": {
-                "email": {
-                    "type": "string",
-                    "example": "user@example.com"
-                },
-                "password": {
-                    "type": "string",
-                    "example": "securepass123"
-                }
-            }
-        },
-        "register.Response": {
-            "type": "object",
-            "properties": {
-                "user_id": {
-                    "type": "string",
-                    "example": "550e8400-e29b-41d4-a716-446655440000"
-                }
-            }
-        },
-        "transfermoney.ErrorResponse": {
-            "type": "object",
-            "properties": {
-                "error_code": {
-                    "type": "string",
-                    "example": "same_wallet"
-                },
-                "message": {
-                    "type": "string",
-                    "example": "source and destination wallets must differ"
-                }
-            }
-        },
-        "transfermoney.Request": {
-            "type": "object",
-            "properties": {
-                "amount": {
-                    "type": "integer",
-                    "example": 3000
-                },
-                "currency": {
-                    "type": "string",
-                    "example": "EUR"
-                },
-                "from_wallet_id": {
-                    "type": "string",
-                    "example": "550e8400-e29b-41d4-a716-446655440000"
-                },
-                "reason": {
-                    "type": "string",
-                    "example": "Rent split"
-                },
-                "to_wallet_id": {
-                    "type": "string",
-                    "example": "660e8400-e29b-41d4-a716-446655440000"
-                }
-            }
-        },
-        "transfermoney.Response": {
-            "type": "object",
-            "properties": {
-                "transaction_id": {
-                    "type": "string",
-                    "example": "770e8400-e29b-41d4-a716-446655440000"
-                }
-            }
-        },
-        "withdrawmoney.ErrorResponse": {
+        "internal_payments_wallet_slices_withdrawmoney.ErrorResponse": {
             "type": "object",
             "properties": {
                 "error_code": {
@@ -881,7 +1636,7 @@ const docTemplate = `{
                 }
             }
         },
-        "withdrawmoney.Request": {
+        "internal_payments_wallet_slices_withdrawmoney.Request": {
             "type": "object",
             "properties": {
                 "amount": {
@@ -902,7 +1657,7 @@ const docTemplate = `{
                 }
             }
         },
-        "withdrawmoney.Response": {
+        "internal_payments_wallet_slices_withdrawmoney.Response": {
             "type": "object",
             "properties": {
                 "new_balance": {
@@ -912,6 +1667,34 @@ const docTemplate = `{
                 "wallet_id": {
                     "type": "string",
                     "example": "550e8400-e29b-41d4-a716-446655440000"
+                }
+            }
+        },
+        "internal_voice.voiceRequest": {
+            "type": "object",
+            "properties": {
+                "text": {
+                    "type": "string"
+                }
+            }
+        },
+        "internal_voice.voiceResponse": {
+            "type": "object",
+            "properties": {
+                "message": {
+                    "type": "string"
+                },
+                "options": {
+                    "type": "array",
+                    "items": {
+                        "type": "string"
+                    }
+                },
+                "status": {
+                    "type": "string"
+                },
+                "transcript": {
+                    "type": "string"
                 }
             }
         }
