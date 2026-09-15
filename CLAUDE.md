@@ -5,7 +5,7 @@ Go API server for personal money management. Event Sourcing + DDD + Vertical Sli
 ## Tech
 
 - Go (latest stable)
-- PostgreSQL (event store + projections)
+- KurrentDB (event store, phase 2) / in-memory (phase 1) — PostgreSQL for projections
 - REST API with JSON (snake_case fields always)
 - All money amounts are integer cents — never use float for money
 
@@ -13,11 +13,15 @@ Go API server for personal money management. Event Sourcing + DDD + Vertical Sli
 
 Each feature is a self-contained slice. A slice owns everything it needs — no shared `services/`, `utils/`, or `helpers/` across slices.
 
-### Aggregates vs Slices
+### Aggregates vs Slices vs Processes
 
 **Aggregates** hold domain state, events, and invariants. They live in the bounded context's `domain/` package (e.g., `payments/wallet/domain/`, package name `wallet`).
 
 **Slices** are organized per command/use case (e.g., `addwallet/`, `depositmoney/`) and live under the context's `slices/` folder. Each slice owns its command, handler, errors, and registration. Slices import the aggregate they operate on.
+
+**Processes** live in `payments/processes/` and carry work that spans more than one aggregate. They are the documented exception to "a slice owns everything it needs": a process manager's whole job is issuing commands against aggregates it does not own.
+
+**A process may import any slice. No slice may import a process.** The arrow points one way. If you find yourself wanting a command bus to avoid the import, don't — the import is the design. See [ADR 0002](./docs/adr/0002-cross-aggregate-processes.md).
 
 ### Folder structure
 
@@ -46,18 +50,39 @@ backend/
           ...same structure...
         withdrawmoney/
           ...same structure...
+        refundmoney/            # no handler.go, no route — processes only
+      schema/                   # frozen historical event shapes + upcasters
+                                # (created when the first upcaster exists)
+    debt/  recurringmovement/   # same shape
+
+    processes/                  # cross-aggregate processes (the import exception)
+      transfer/
+        domain/                 # process aggregate + its events
+        reactor.go              # the saga steps + compensation
+        slices/                 # requesttransfer (202), gettransfer
+        projections/            # processes_view
+      occurrence/               # one firing of a recurring movement
+      debtsettlement/
+      sweeper/                  # re-drives processes that stall
+      rejection/                # maps aggregate refusals to reason codes
+
+    eventcatalog/               # THE list of event types + versions
+      testdata/                 # golden fixture per (type, version)
+    streams/                    # every stream name in one place
   specs/
-    wallet.md                 # event model spec (markdown, normalized to YAML by skill)
+    wallet.md                   # event model spec (markdown, normalized to YAML by skill)
     transfer.md
   pkg/
     logger/
       logger.go               # Logger interface + slog implementation
   shared/
     eventstore/
-      store.go                # EventStore interface + event envelope
+      store.go                # Store (write) + Feed (read) + StreamID + Recorded
+      codec.go                # type registry + upcaster chains — the ONLY decoder
+      upcast.go               # Typed[From,To] adapter
       errors.go               # ErrConcurrencyConflict, ErrAggregateNotFound
-      memory.go               # in-memory implementation (tests + early dev)
-      postgres.go             # PostgreSQL implementation (later)
+      memory.go               # streams + global ordered log; satisfies both ports
+      kurrent.go              # KurrentDB implementation (phase 2)
     middleware/
       correlation.go          # generates UUID correlation_id, injects into context
       logging.go              # logs method, path, status, duration via logger interface
@@ -74,8 +99,10 @@ Put it in `shared/` but this should be rare. Valid reasons: event store interfac
 
 Each slice exports a registration function:
 
-- `RegisterCommands(router *gin.Engine, store eventstore.Store, log logger.Logger)` — wires HTTP handler + command handler
-- `RegisterProjections(db, eventSubscriber)` — wires projection updaters (added per slice when needed)
+- `RegisterCommands(router *gin.Engine, store eventstore.Store, codec *eventstore.Codec)` — wires HTTP handler + command handler
+- `RegisterQueries(router *gin.Engine, ...)` — wires read-side handlers
+
+A slice with no HTTP surface has no `RegisterCommands` at all. `refundmoney` is the example: a refund is only ever issued by a process compensating for a failed step, never by a person, and exposing it would let a caller mint money past the checks `depositmoney` enforces.
 
 `main.go` calls one `RegisterCommands` line per slice. No DI frameworks, no global registries, no `func init()` magic.
 
@@ -88,14 +115,35 @@ Each slice exports a registration function:
 - Projections subscribe to events and build read-optimized views
 - Event store is append-only
 
+### Event schema versioning (CRITICAL)
+
+Full rationale in [ADR 0001](./docs/adr/0001-event-schema-versioning-and-upcasting.md).
+
+- **`payments/eventcatalog` is the single list.** Adding an event type means adding one `Entry`. Changing a shape means bumping its `Version` and regenerating its fixture.
+- **The version lives in metadata**, never in the event type name. Type names are stable forever, so routing tables never change on a bump.
+- **Bump on every shape change**, additive ones included. The version records which shape was written, not which translations exist — that is what keeps "backfill a different default for old events" possible later.
+- **Most changes need no upcaster.** `json.Unmarshal` zeroes absent fields and ignores unknown ones. You only need one for a rename, a type change, a default the zero value cannot express, a split/merge, or a semantic reinterpretation.
+- **Upcasters are typed and 1→1.** Freeze the old struct in the context's `schema/` package, write a plain Go func, wire it with `eventstore.Typed`. Splits, merges, and changes needing absent information get a **new event type** instead.
+- **Retiring a type means ceasing to emit it, never ceasing to understand it.** Its factory stays registered and its `Apply()` case stays forever.
+- Regenerate fixtures with `go test ./internal/payments/eventcatalog -update`.
+
+### Decoding
+
+**`eventstore.Codec` is the only place a payload is decoded.** Never write a
+private `unmarshalEvent` switch — there were seven of them once, and one had
+silently been missing a case long enough to corrupt every deposit response.
+
+- Unknown to the codec → hard error. A registered type a given consumer does not handle → skip. These are different, and only the first is a fault.
+- `expectedVersion` comes from the stream revision (`eventstore.ExpectedRevisionAfter`), never from the count of decoded events.
+
 ### Projection Idempotency (CRITICAL)
 
-Projections are replayed on every server startup via `ReplayAll()`. **Every projection must be idempotent** — replaying the same event twice must not create duplicate rows.
+Projections replay from the beginning of the log on boot. Checkpoints ([ADR 0003](./docs/adr/0003-independent-projection-subscriptions.md)) make that fast; they are not what makes it safe. **Every projection must be idempotent.**
 
-- **Never use `uuid.New()` for projection row IDs.** Use deterministic IDs derived from event data: either from `meta.EventID` (passed via `EventMetadata`) or from a stable domain field (e.g., `WalletID`, `TransactionID`).
-- When one event produces multiple rows (e.g., `TransactionCompleted` → `transfer_out` + `transfer_in`), use `meta.EventID + "-suffix"` to keep IDs unique and stable.
+- **Never use `uuid.New()` for projection row IDs.** Use deterministic IDs derived from event data: `meta.EventID`, or a stable domain field.
+- When one event produces multiple rows, use `meta.EventID + "-suffix"` to keep IDs unique and stable.
 - Use `ON CONFLICT (id) DO NOTHING` for insert-only projections or `ON CONFLICT (id) DO UPDATE` for mutable projections.
-- The `Subscriber.Handle(event any, meta eventstore.EventMetadata)` interface provides `meta.EventID` — use it.
+- **`movements_view` is a pure ledger**: every row changes a balance. Processes that moved no money belong in `processes_view`. Do not re-derive movement rows from process events — the wallet legs already emit real ones, and doing both shows every transfer twice.
 
 ### Aggregate Event Ownership (CRITICAL)
 
@@ -112,14 +160,29 @@ Projections are replayed on every server startup via `ReplayAll()`. **Every proj
 
 ### Event Store
 
-- Interface in `shared/eventstore/store.go`: `Append(ctx, aggregateID, events, expectedVersion)`, `Load(ctx, aggregateID)`, `Subscribe(ctx, handler)`
-- Optimistic concurrency via `expectedVersion` on Append
-- Event envelope: EventID, AggregateID, AggregateType, EventType, Version, CorrelationID, Payload (JSON), OccurredAt
-- Build in-memory implementation first, swap in PostgreSQL later
+Two ports, in `shared/eventstore/store.go`:
+
+- **`Store`** (write side): `Append(ctx, stream StreamID, events, expectedVersion)`, `Load(ctx, stream) ([]Recorded, error)`
+- **`Feed`** (read side): `SubscribeAll(ctx, from Position, handler)`
+
+- Stream names come from `payments/streams`, never built inline. A `StreamID` renders as `wallet-<uuid>`, which is what KurrentDB's `$ce-` category projections key off.
+- Revisions are **0-based**; `NoStream` (-1) asserts a stream does not exist yet.
+- Appending at `NoStream` to a deterministically-named stream is how occurrences dedupe: **the stream name is the idempotency key**, so there is no dedup table.
+- There is no `AppendMulti`. Nothing writes two aggregates at once — that is what processes are for.
+
+### Cross-aggregate processes
+
+Every flow touching more than one aggregate takes the same shape: **a request, zero or more steps, and exactly one terminal outcome.**
+
+- **Past tense only once true.** `MovementDue` → `MovementExecuted` | `MovementSkipped`, not `RecurringMovementExecuted` before anything has been paid.
+- **Two kinds of idempotency, both needed.** Wallet-level keys (`<txID>:debit`) stop money moving twice; a process-level state check stops the reactor livelocking on a conflict it caused itself.
+- **Failed ⇒ no money moved. Stuck ⇒ money is in limbo, and it is written down.** Never drop a permanent rejection — record a terminal event.
+- A rejection the aggregate raised is permanent (record the outcome); anything unrecognised is transient (retry). `payments/processes/rejection` owns that split.
 
 ## DDD Rules
 
 - Aggregates protect invariants (e.g., "balance cannot go negative") — all validation in aggregate methods, zero in handlers
+- One invariant is deliberately weaker than its sibling: `wallet.Refund` skips the disabled-wallet and category checks that `Deposit` enforces, because returning money already taken out of a wallet is not new money arriving. Weakening it was the fix for funds being stranded when a wallet was disabled mid-transfer.
 - Value objects are immutable (e.g., Money, WalletID, Currency)
 - Domain logic lives in aggregates and value objects, never in handlers or infrastructure
 - Use ubiquitous language everywhere: wallet, deposit, withdrawal, transfer, balance
@@ -160,7 +223,8 @@ Three layers, in order of importance:
 
 1. **Aggregate tests** (`wallet/aggregate_test.go`): Given/When/Then with table-driven tests. Given past events, when command, then new events or error. Pure, no infrastructure. 80% of test effort here.
 2. **Handler tests** (`createwallet/handler_test.go`): HTTP request → verify status + JSON shape. Uses in-memory event store. Tests the full vertical path per slice.
-3. **Projection tests**: Given events, verify read model. Only when projection has logic beyond simple mapping.
+3. **Process tests** (`processes/transfer/reactor_test.go`): drive a reactor over a memory store and assert the money. The failure paths are the point — rejection before the debit, compensation after it, redelivery as a no-op.
+4. **Projection tests**: Given events, verify read model. Only when the projection has logic beyond simple mapping — or when it guards a known regression, like one transfer yielding exactly two movement rows.
 
 No mocking — Event Sourcing makes it unnecessary. Aggregates are pure functions over events, in-memory event store replaces mocks.
 
@@ -179,6 +243,7 @@ Miro (visual event model) → `specs/<slice>.md` (markdown) → skill normalizes
 
 ```bash
 go test ./...          # run all tests
+go test ./internal/payments/eventcatalog -update   # regenerate event fixtures after a version bump
 go vet ./...           # vet code
 go build ./...         # verify compilation
 golangci-lint run      # lint (if installed)

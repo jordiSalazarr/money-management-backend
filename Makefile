@@ -22,7 +22,7 @@ test-ddb: localstack-up create-local-tables ## Run DDB contract tests against Lo
 build: ## Native build of every entry point
 	go build ./...
 
-run: ## Start cmd/server with the in-memory store (no infra needed)
+run: ## Start cmd/server with the in-memory store + full in-process pipeline (no infra needed)
 	go run ./cmd/server
 
 # Generic Lambda zip target. Call with CMD=lambda|projector|migrate|reactor|recurring-cron.
@@ -97,14 +97,24 @@ postgres-down: ## Stop the Postgres container
 dev-migrate: postgres-up ## Apply any unapplied Postgres migrations (idempotent)
 	AURORA_URL=$(AURORA_URL) go run ./cmd/devtools migrate
 
-dev-stack: localstack-up create-local-tables postgres-up dev-migrate ## Run cmd/server with DDB + Aurora + in-process async pipeline
-	STORE=dynamodb \
-	EVENTS_TABLE=$(EVENTS_TABLE) \
-	USERS_TABLE=$(USERS_TABLE) \
-	AURORA_URL=$(AURORA_URL) \
-	RUN_ASYNC=true \
-	$(LS_AWS_ENV) \
-		go run ./cmd/server
+# NOTE: dev-stack is parked until phase 2.
+#
+# It ran cmd/server against DynamoDB with the in-process async pipeline. That
+# pipeline is now a real subscription to the store's global log, and DynamoDB
+# has no global log — its read side was a Kinesis export. So the projector, the
+# process reactors, the cron and the sweeper cannot start against it, and the
+# stack would serve empty read models with no transfer ever completing.
+#
+# `make run` is the full local experience in the meantime: in-memory store with
+# every one of those pieces running. dev-stack comes back in phase 2 pointed at
+# KurrentDB, when there is a real log to subscribe to.
+dev-stack: ## (parked until phase 2 — use `make run`) DDB + Aurora + async pipeline
+	@echo "dev-stack is parked until the KurrentDB adapter lands in phase 2."
+	@echo "DynamoDB has no global log, so the projector and reactors cannot subscribe to it."
+	@echo ""
+	@echo "Use 'make run' instead: in-memory store with the projector, the three"
+	@echo "process reactors, the recurring cron and the sweeper all running in process."
+	@exit 1
 
 dev-reset: localstack-up postgres-up ## Wipe DDB events + projection tables, then re-run migrations
 	EVENTS_TABLE=$(EVENTS_TABLE) AURORA_URL=$(AURORA_URL) $(LS_AWS_ENV) \
