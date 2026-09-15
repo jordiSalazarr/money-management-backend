@@ -9,6 +9,7 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jordisalazar/money-management/internal/payments/debt/slices/recorddebt"
+	"github.com/jordisalazar/money-management/internal/payments/eventcatalog"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 	"github.com/jordisalazar/money-management/internal/shared/middleware"
 )
@@ -23,7 +24,8 @@ func setupRouter() *gin.Engine {
 		c.Next()
 	})
 	store := eventstore.NewMemoryStore()
-	recorddebt.RegisterCommands(r, store)
+	codec := eventcatalog.NewCodec()
+	recorddebt.RegisterCommands(r, store, codec)
 	return r
 }
 

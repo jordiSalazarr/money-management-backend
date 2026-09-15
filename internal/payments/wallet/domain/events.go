@@ -3,10 +3,11 @@ package wallet
 import "time"
 
 const (
-	EventTypeWalletAdded     = "WalletAdded"
-	EventTypeMoneyDeposited  = "MoneyDeposited"
-	EventTypeMoneyWithdrawn  = "MoneyWithdrawn"
-	EventTypeWalletDisabled  = "WalletDisabled"
+	EventTypeWalletAdded    = "WalletAdded"
+	EventTypeMoneyDeposited = "MoneyDeposited"
+	EventTypeMoneyWithdrawn = "MoneyWithdrawn"
+	EventTypeWalletDisabled = "WalletDisabled"
+	EventTypeMoneyRefunded  = "MoneyRefunded"
 )
 
 type WalletAdded struct {
@@ -61,3 +62,23 @@ type WalletDisabled struct {
 }
 
 func (e WalletDisabled) EventType() string { return EventTypeWalletDisabled }
+
+// MoneyRefunded is money returned to a wallet to undo a withdrawal that should
+// not have stood — the compensating leg of a failed process.
+//
+// It is deliberately not a MoneyDeposited: a refund is not new money arriving,
+// so it is not subject to the rules that govern new money arriving, and it
+// carries no user-chosen category because a refund's category is not a choice.
+type MoneyRefunded struct {
+	WalletID   string    `json:"wallet_id"`
+	UserID     string    `json:"user_id"`
+	Amount     int       `json:"amount"`
+	Currency   string    `json:"currency"`
+	Reason     string    `json:"reason"`
+	RefundedAt time.Time `json:"refunded_at"`
+	// IdempotencyKey is always set for refunds — they are only ever issued by a
+	// process, never by a user — and is what makes a redelivery a no-op.
+	IdempotencyKey string `json:"idempotency_key"`
+}
+
+func (e MoneyRefunded) EventType() string { return EventTypeMoneyRefunded }

@@ -2,81 +2,42 @@ package settledebt
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
-	"github.com/google/uuid"
-
-	debt "github.com/jordisalazar/money-management/internal/payments/debt/domain"
+	"github.com/jordisalazar/money-management/internal/payments/debt/domain"
+	"github.com/jordisalazar/money-management/internal/payments/streams"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
+	"github.com/jordisalazar/money-management/internal/shared/middleware"
 )
 
 type CommandHandler struct {
 	store eventstore.Store
+	codec *eventstore.Codec
 }
 
-func NewCommandHandler(store eventstore.Store) *CommandHandler {
-	return &CommandHandler{store: store}
+func NewCommandHandler(store eventstore.Store, codec *eventstore.Codec) *CommandHandler {
+	return &CommandHandler{store: store, codec: codec}
 }
 
 func (h *CommandHandler) Handle(ctx context.Context, cmd Command) error {
-	now := time.Now().UTC()
+	stream := streams.Debt(cmd.DebtID)
 
-	events, err := h.store.Load(ctx, cmd.DebtID)
+	agg := debt.NewAggregate()
+	expected, err := eventstore.Rehydrate(ctx, h.store, h.codec, stream, agg.Apply)
 	if err != nil {
 		return err
 	}
-
-	agg := debt.NewAggregate()
-	for _, e := range events {
-		raw, err := unmarshalDebtEvent(e)
-		if err != nil {
-			return err
-		}
-		if raw != nil {
-			agg.Apply(raw)
-		}
+	if expected == eventstore.NoStream {
+		return eventstore.ErrAggregateNotFound
 	}
 
-	if err := agg.Settle(cmd.SettledBy, now); err != nil {
+	now := time.Now().UTC()
+	// Raises DebtSettlementRequested. The debt is not settled until the
+	// reactor has actually moved the money — see ADR 0002.
+	if err := agg.RequestSettlement(cmd.SettledBy, now); err != nil {
 		return err
 	}
 
-	envelopes := make([]eventstore.Event, 0, len(agg.Changes()))
-	for _, change := range agg.Changes() {
-		payload, err := json.Marshal(change)
-		if err != nil {
-			return err
-		}
-		envelopes = append(envelopes, eventstore.Event{
-			EventID:       uuid.New().String(),
-			AggregateID:   cmd.DebtID,
-			AggregateType: "debt",
-			EventType:     change.EventType(),
-			Payload:       payload,
-			OccurredAt:    now,
-		})
-	}
-	//A reactor withrawas money from the account, this just
-	//changes the state to "Settled"
-	return h.store.Append(ctx, cmd.DebtID, envelopes, len(events))
-}
-
-func unmarshalDebtEvent(e eventstore.Event) (any, error) {
-	switch e.EventType {
-	case debt.EventTypeDebtRecorded:
-		var evt debt.DebtRecorded
-		if err := json.Unmarshal(e.Payload, &evt); err != nil {
-			return nil, err
-		}
-		return evt, nil
-	case debt.EventTypeDebtSettled:
-		var evt debt.DebtSettled
-		if err := json.Unmarshal(e.Payload, &evt); err != nil {
-			return nil, err
-		}
-		return evt, nil
-	default:
-		return nil, nil
-	}
+	return eventstore.AppendChanges(ctx, h.store, h.codec, stream, expected,
+		agg.Changes(), middleware.GetCorrelationID(ctx), now)
 }

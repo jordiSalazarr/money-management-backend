@@ -12,11 +12,13 @@ import (
 	"github.com/gin-gonic/gin"
 	"github.com/jordisalazar/money-management/internal/payments/debt/domain"
 	"github.com/jordisalazar/money-management/internal/payments/debt/slices/settledebt"
+	"github.com/jordisalazar/money-management/internal/payments/eventcatalog"
+	"github.com/jordisalazar/money-management/internal/payments/streams"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 	"github.com/jordisalazar/money-management/internal/shared/middleware"
 )
 
-func setupRouter() (*gin.Engine, eventstore.Store) {
+func setupRouter() (*gin.Engine, eventstore.Store, *eventstore.Codec) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -26,13 +28,12 @@ func setupRouter() (*gin.Engine, eventstore.Store) {
 		c.Next()
 	})
 	store := eventstore.NewMemoryStore()
-	store.RegisterEvent(debt.EventTypeDebtRecorded, func() any { return &debt.DebtRecorded{} })
-	store.RegisterEvent(debt.EventTypeDebtSettled, func() any { return &debt.DebtSettled{} })
-	settledebt.RegisterCommands(r, store)
-	return r, store
+	codec := eventcatalog.NewCodec()
+	settledebt.RegisterCommands(r, store, codec)
+	return r, store, codec
 }
 
-func seedDebt(t *testing.T, store eventstore.Store, debtID string) {
+func seedDebt(t *testing.T, store eventstore.Store, codec *eventstore.Codec, debtID string) {
 	t.Helper()
 	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
 	evt := debt.DebtRecorded{
@@ -45,25 +46,17 @@ func seedDebt(t *testing.T, store eventstore.Store, debtID string) {
 		Reason:    "Dinner",
 		CreatedAt: now,
 	}
-	payload, _ := json.Marshal(evt)
-	err := store.Append(context.Background(), debtID, []eventstore.Event{
-		{
-			EventID:       "evt-1",
-			AggregateID:   debtID,
-			AggregateType: "debt",
-			EventType:     debt.EventTypeDebtRecorded,
-			Payload:       payload,
-			OccurredAt:    now,
-		},
-	}, 0)
+	err := eventstore.AppendChanges(context.Background(), store, codec,
+		streams.Debt(debtID), eventstore.NoStream,
+		[]debt.DomainEvent{evt}, "corr-test", now)
 	if err != nil {
 		t.Fatalf("failed to seed debt: %v", err)
 	}
 }
 
 func TestSettleDebt_Success(t *testing.T) {
-	router, store := setupRouter()
-	seedDebt(t, store, "debt-1")
+	router, store, codec := setupRouter()
+	seedDebt(t, store, codec, "debt-1")
 
 	body := map[string]any{"settled_by": "user-1"}
 	jsonBody, _ := json.Marshal(body)
@@ -90,9 +83,11 @@ func TestSettleDebt_Success(t *testing.T) {
 	}
 }
 
-func TestSettleDebt_AlreadySettled(t *testing.T) {
-	router, store := setupRouter()
-	seedDebt(t, store, "debt-1")
+// A second request while the first is still in flight is a conflict, not
+// "already settled": the money has not moved yet.
+func TestSettleDebt_SettlementAlreadyInProgress(t *testing.T) {
+	router, store, codec := setupRouter()
+	seedDebt(t, store, codec, "debt-1")
 
 	body := map[string]any{"settled_by": "user-1"}
 	jsonBody, _ := json.Marshal(body)
@@ -114,19 +109,19 @@ func TestSettleDebt_AlreadySettled(t *testing.T) {
 	w = httptest.NewRecorder()
 	router.ServeHTTP(w, req)
 
-	if w.Code != http.StatusBadRequest {
-		t.Fatalf("second settle: status = %d, want %d; body = %s", w.Code, http.StatusBadRequest, w.Body.String())
+	if w.Code != http.StatusConflict {
+		t.Fatalf("second settle: status = %d, want %d; body = %s", w.Code, http.StatusConflict, w.Body.String())
 	}
 
 	var resp map[string]string
 	_ = json.Unmarshal(w.Body.Bytes(), &resp)
-	if resp["error_code"] != "debt_already_settled" {
-		t.Errorf("error_code = %q, want %q", resp["error_code"], "debt_already_settled")
+	if resp["error_code"] != "settlement_in_progress" {
+		t.Errorf("error_code = %q, want %q", resp["error_code"], "settlement_in_progress")
 	}
 }
 
 func TestSettleDebt_NotFound(t *testing.T) {
-	router, _ := setupRouter()
+	router, _, _ := setupRouter()
 
 	body := map[string]any{"settled_by": "user-1"}
 	jsonBody, _ := json.Marshal(body)
@@ -149,8 +144,8 @@ func TestSettleDebt_NotFound(t *testing.T) {
 }
 
 func TestSettleDebt_MissingSettledBy(t *testing.T) {
-	router, store := setupRouter()
-	seedDebt(t, store, "debt-1")
+	router, store, codec := setupRouter()
+	seedDebt(t, store, codec, "debt-1")
 
 	body := map[string]any{"settled_by": ""}
 	jsonBody, _ := json.Marshal(body)

@@ -8,10 +8,11 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jordisalazar/money-management/internal/shared/eventstore"
-	"github.com/jordisalazar/money-management/internal/shared/middleware"
+	"github.com/jordisalazar/money-management/internal/payments/eventcatalog"
 	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/addwallet"
 	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/disablewallet"
+	"github.com/jordisalazar/money-management/internal/shared/eventstore"
+	"github.com/jordisalazar/money-management/internal/shared/middleware"
 )
 
 func setupRouter() *gin.Engine {
@@ -24,8 +25,9 @@ func setupRouter() *gin.Engine {
 		c.Next()
 	})
 	store := eventstore.NewMemoryStore()
-	addwallet.RegisterCommands(r, store)
-	disablewallet.RegisterCommands(r, store)
+	codec := eventcatalog.NewCodec()
+	addwallet.RegisterCommands(r, store, codec)
+	disablewallet.RegisterCommands(r, store, codec)
 	return r
 }
 

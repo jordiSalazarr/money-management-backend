@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jordisalazar/money-management/internal/payments/debt/slices/getdebts"
 	"github.com/jordisalazar/money-management/internal/payments/debt/projections"
+	"github.com/jordisalazar/money-management/internal/payments/debt/slices/getdebts"
 	"github.com/jordisalazar/money-management/internal/shared/middleware"
 )
 

@@ -26,4 +26,17 @@ type Options struct {
 	// DefaultStore is the fallback when the STORE env var is unset. The
 	// HTTP entry point picks memory; the Lambda entry point picks dynamodb.
 	DefaultStore StoreMode
+
+	// RunAsync starts the projector, the process reactors, the recurring cron
+	// and the sweeper in the same process as the HTTP server.
+	//
+	// It requires a store with a global log. Memory mode has one and needs
+	// this: without it the read models stay empty and no transfer ever
+	// completes. DynamoDB has no global log — its read side is a Kinesis
+	// export — so the flag is ignored there with a warning, until KurrentDB
+	// lands in phase 2.
+	RunAsync bool
+
+	// Async tunes the in-process pipeline. The zero value is fine.
+	Async AsyncOptions
 }

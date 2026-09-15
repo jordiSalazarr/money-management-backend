@@ -508,3 +508,108 @@ func TestIdempotencyKey(t *testing.T) {
 		}
 	})
 }
+
+// TestRefund covers the one place a wallet invariant is deliberately weaker
+// than its Deposit counterpart. See ADR 0002: the disabled-wallet check on
+// Deposit exists to stop *new* money entering a closed pot, and returning
+// money already taken out of that same pot is not new money. Without this,
+// disabling a wallet mid-transfer strands the funds and nothing records it.
+func TestRefund(t *testing.T) {
+	now := time.Date(2026, 9, 15, 12, 0, 0, 0, time.UTC)
+
+	newWallet := func(t *testing.T) *wallet.Aggregate {
+		t.Helper()
+		agg, err := wallet.Create("wallet-1", "user-1", "Everyday", "", 5000, "EUR", "Checking", now)
+		if err != nil {
+			t.Fatalf("creating wallet: %v", err)
+		}
+		return agg
+	}
+
+	t.Run("refunds into a disabled wallet", func(t *testing.T) {
+		agg := newWallet(t)
+		if err := agg.Withdraw("user-1", 5000, "EUR", "transfer out", "Other", "tx-1:debit", now); err != nil {
+			t.Fatalf("withdraw: %v", err)
+		}
+		if err := agg.Disable("user-1", "closing it", now); err != nil {
+			t.Fatalf("disable: %v", err)
+		}
+
+		// This is the step that used to fail with ErrWalletDisabled, drop the
+		// record on a permanent-error classification, and lose the money.
+		if err := agg.Refund("user-1", 5000, "EUR", "transfer failed", "tx-1:refund", now); err != nil {
+			t.Fatalf("refund into a disabled wallet must succeed, got %v", err)
+		}
+		if agg.Balance() != 5000 {
+			t.Errorf("Balance = %d, want 5000 — the money must come back", agg.Balance())
+		}
+	})
+
+	t.Run("raises MoneyRefunded", func(t *testing.T) {
+		agg := newWallet(t)
+		if err := agg.Refund("user-1", 250, "EUR", "transfer failed", "tx-1:refund", now); err != nil {
+			t.Fatalf("refund: %v", err)
+		}
+		changes := agg.Changes()
+		last := changes[len(changes)-1]
+		if last.EventType() != "MoneyRefunded" {
+			t.Fatalf("EventType = %q, want MoneyRefunded", last.EventType())
+		}
+		e, ok := last.(wallet.MoneyRefunded)
+		if !ok {
+			t.Fatalf("want wallet.MoneyRefunded, got %T", last)
+		}
+		if e.Amount != 250 || e.WalletID != "wallet-1" || e.IdempotencyKey != "tx-1:refund" {
+			t.Errorf("event does not carry the refund: %+v", e)
+		}
+	})
+
+	t.Run("still rejects a currency mismatch", func(t *testing.T) {
+		agg := newWallet(t)
+		err := agg.Refund("user-1", 250, "USD", "transfer failed", "tx-1:refund", now)
+		if !errors.Is(err, wallet.ErrCurrencyMismatch) {
+			t.Fatalf("want ErrCurrencyMismatch, got %v", err)
+		}
+	})
+
+	t.Run("still rejects a non-positive amount", func(t *testing.T) {
+		agg := newWallet(t)
+		for _, amount := range []int{0, -1} {
+			if err := agg.Refund("user-1", amount, "EUR", "r", "k", now); !errors.Is(err, wallet.ErrInvalidAmount) {
+				t.Errorf("amount %d: want ErrInvalidAmount, got %v", amount, err)
+			}
+		}
+	})
+
+	t.Run("is idempotent on the same key", func(t *testing.T) {
+		agg := newWallet(t)
+		if err := agg.Refund("user-1", 250, "EUR", "transfer failed", "tx-1:refund", now); err != nil {
+			t.Fatalf("first refund: %v", err)
+		}
+		before := agg.Balance()
+
+		err := agg.Refund("user-1", 250, "EUR", "transfer failed", "tx-1:refund", now)
+		if !errors.Is(err, wallet.ErrAlreadyProcessed) {
+			t.Fatalf("want ErrAlreadyProcessed on redelivery, got %v", err)
+		}
+		if agg.Balance() != before {
+			t.Errorf("Balance = %d, want %d — a redelivered refund must not pay twice", agg.Balance(), before)
+		}
+	})
+
+	t.Run("rehydrates from MoneyRefunded", func(t *testing.T) {
+		agg := wallet.NewAggregate()
+		agg.Apply(wallet.WalletAdded{WalletID: "wallet-1", UserID: "user-1", Currency: "EUR", InitialAmount: 0, CreatedAt: now})
+		agg.Apply(wallet.MoneyWithdrawn{WalletID: "wallet-1", Amount: 900, Currency: "EUR", IdempotencyKey: "tx-1:debit", WithdrawnAt: now})
+		agg.Apply(wallet.MoneyRefunded{WalletID: "wallet-1", Amount: 900, Currency: "EUR", IdempotencyKey: "tx-1:refund", RefundedAt: now})
+
+		if agg.Balance() != 0 {
+			t.Errorf("Balance = %d, want 0 after withdraw+refund", agg.Balance())
+		}
+		// The key must be remembered on replay, or a redelivery after a restart
+		// would refund a second time.
+		if err := agg.Refund("user-1", 900, "EUR", "r", "tx-1:refund", now); !errors.Is(err, wallet.ErrAlreadyProcessed) {
+			t.Fatalf("replayed refund key not remembered: got %v", err)
+		}
+	})
+}

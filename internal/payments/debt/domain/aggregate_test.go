@@ -110,50 +110,107 @@ func TestCreate(t *testing.T) {
 	}
 }
 
-func TestSettle(t *testing.T) {
+// TestSettlementLifecycle covers the three-step shape a debt settlement now
+// has. Requesting one no longer settles it: the money has not moved yet, and
+// the reactor may still be refused. See ADR 0002.
+func TestSettlementLifecycle(t *testing.T) {
 	now := time.Date(2026, 4, 28, 12, 0, 0, 0, time.UTC)
 	settleTime := time.Date(2026, 4, 29, 10, 0, 0, 0, time.UTC)
 
-	t.Run("settles a created debt", func(t *testing.T) {
-		agg, _ := debt.Create("debt-1", "user-1", "wallet-1", 1000, "EUR", "IN", "Dinner", now)
-		// Clear creation changes
-		_ = agg.Changes()
-
-		err := agg.Settle("user-1", settleTime)
+	newDebt := func(t *testing.T) *debt.Aggregate {
+		t.Helper()
+		agg, err := debt.Create("debt-1", "user-1", "wallet-1", 1000, "EUR", "IN", "Dinner", now)
 		if err != nil {
+			t.Fatalf("creating debt: %v", err)
+		}
+		return agg
+	}
+
+	lastEvent := func(agg *debt.Aggregate) string {
+		changes := agg.Changes()
+		return changes[len(changes)-1].EventType()
+	}
+
+	t.Run("requesting a settlement does not settle the debt", func(t *testing.T) {
+		agg := newDebt(t)
+
+		if err := agg.RequestSettlement("user-1", settleTime); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		if agg.Status() == debt.DebtStatusSettled {
+			t.Fatal("the debt must not read settled — no money has moved yet")
+		}
+		if agg.Status() != debt.DebtStatusSettling {
+			t.Errorf("Status = %q, want %q", agg.Status(), debt.DebtStatusSettling)
+		}
+		if got := lastEvent(agg); got != "DebtSettlementRequested" {
+			t.Errorf("EventType = %q, want DebtSettlementRequested", got)
+		}
+	})
+
+	t.Run("marking it settled closes the settlement", func(t *testing.T) {
+		agg := newDebt(t)
+		_ = agg.RequestSettlement("user-1", settleTime)
+
+		if err := agg.MarkSettled("user-1", settleTime); err != nil {
 			t.Fatalf("unexpected error: %v", err)
 		}
 		if agg.Status() != debt.DebtStatusSettled {
 			t.Errorf("Status = %q, want %q", agg.Status(), debt.DebtStatusSettled)
 		}
-		changes := agg.Changes()
-		// Changes includes DebtRecorded + DebtSettled
-		found := false
-		for _, c := range changes {
-			if c.EventType() == "DebtSettled" {
-				found = true
-			}
-		}
-		if !found {
-			t.Error("expected DebtSettled event in changes")
+		if got := lastEvent(agg); got != "DebtSettled" {
+			t.Errorf("EventType = %q, want DebtSettled", got)
 		}
 	})
 
-	t.Run("cannot settle twice", func(t *testing.T) {
-		agg, _ := debt.Create("debt-1", "user-1", "wallet-1", 1000, "EUR", "IN", "Dinner", now)
-		_ = agg.Settle("user-1", settleTime)
+	t.Run("a failed settlement leaves the debt standing", func(t *testing.T) {
+		agg := newDebt(t)
+		_ = agg.RequestSettlement("user-1", settleTime)
 
-		err := agg.Settle("user-1", settleTime)
-		if err != debt.ErrDebtAlreadySettled {
+		if err := agg.FailSettlement("insufficient_funds", settleTime); err != nil {
+			t.Fatalf("unexpected error: %v", err)
+		}
+		// Back to standing rather than a dead end, so the owner can settle it
+		// once they have the funds.
+		if agg.Status() != debt.DebtStatusCreated {
+			t.Errorf("Status = %q, want %q", agg.Status(), debt.DebtStatusCreated)
+		}
+		if err := agg.RequestSettlement("user-1", settleTime); err != nil {
+			t.Errorf("a failed settlement must be retryable, got %v", err)
+		}
+	})
+
+	t.Run("cannot settle a debt that is already settled", func(t *testing.T) {
+		agg := newDebt(t)
+		_ = agg.RequestSettlement("user-1", settleTime)
+		_ = agg.MarkSettled("user-1", settleTime)
+
+		if err := agg.RequestSettlement("user-1", settleTime); err != debt.ErrDebtAlreadySettled {
 			t.Errorf("err = %v, want %v", err, debt.ErrDebtAlreadySettled)
 		}
 	})
 
-	t.Run("missing settled_by", func(t *testing.T) {
-		agg, _ := debt.Create("debt-1", "user-1", "wallet-1", 1000, "EUR", "IN", "Dinner", now)
+	t.Run("cannot request a settlement while one is in progress", func(t *testing.T) {
+		agg := newDebt(t)
+		_ = agg.RequestSettlement("user-1", settleTime)
 
-		err := agg.Settle("", settleTime)
-		if err != debt.ErrMissingSettledBy {
+		if err := agg.RequestSettlement("user-1", settleTime); err != debt.ErrSettlementInProgress {
+			t.Errorf("err = %v, want %v", err, debt.ErrSettlementInProgress)
+		}
+	})
+
+	t.Run("cannot mark settled without a settlement in progress", func(t *testing.T) {
+		agg := newDebt(t)
+
+		if err := agg.MarkSettled("user-1", settleTime); err != debt.ErrSettlementNotRequested {
+			t.Errorf("err = %v, want %v", err, debt.ErrSettlementNotRequested)
+		}
+	})
+
+	t.Run("missing settled_by", func(t *testing.T) {
+		agg := newDebt(t)
+
+		if err := agg.RequestSettlement("", settleTime); err != debt.ErrMissingSettledBy {
 			t.Errorf("err = %v, want %v", err, debt.ErrMissingSettledBy)
 		}
 	})

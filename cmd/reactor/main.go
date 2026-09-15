@@ -1,43 +1,39 @@
-// cmd/reactor is the Kinesis-triggered Lambda that consumes the same
-// DynamoDB → Kinesis stream the projector reads and turns DebtSettled +
-// RecurringMovementExecuted events into wallet deposit / withdrawal
-// commands. Idempotency keys flow through to the wallet aggregate so
-// Kinesis retries cannot double-spend.
+// Command reactor subscribes to the event log and drives the process managers
+// that react to it: transfers, recurring-movement occurrences, and debt
+// settlements.
 //
-// init() wires the router once per cold start. The handler is a thin
-// pass-through to Router.HandleBatch.
+// Like the projector, it used to be a Kinesis-fed Lambda and is now a
+// long-running subscriber, and it refuses to start against a store with no
+// global log.
 package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
-
-	"github.com/aws/aws-lambda-go/events"
-	"github.com/aws/aws-lambda-go/lambda"
+	"os/signal"
+	"syscall"
 
 	"github.com/jordisalazar/money-management/internal/app"
 	"github.com/jordisalazar/money-management/pkg/logger"
 )
 
-var bundle *app.ReactorBundle
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
-func init() {
-	if os.Getenv("SKIP_LAMBDA_INIT") == "1" {
-		return
-	}
 	logr := logger.New()
-	b, err := app.BuildReactor(context.Background(), logr, app.ReactorOptions{})
+	bundle, err := app.BuildReactor(ctx, logr, app.ReactorOptions{})
 	if err != nil {
 		log.Fatalf("build reactor: %v", err)
 	}
-	bundle = b
-}
+	defer bundle.Cleanup()
 
-func handler(ctx context.Context, e events.KinesisEvent) error {
-	return bundle.Router.HandleBatch(ctx, e.Records)
-}
-
-func main() {
-	lambda.Start(handler)
+	logr.Info("reactor running")
+	if err := bundle.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		logr.Error("reactor stopped", "error", err)
+		os.Exit(1)
+	}
+	logr.Info("reactor stopped cleanly")
 }

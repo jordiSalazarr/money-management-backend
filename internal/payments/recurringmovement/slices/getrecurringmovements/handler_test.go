@@ -9,8 +9,8 @@ import (
 
 	"github.com/gin-gonic/gin"
 	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/domain"
-	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/slices/getrecurringmovements"
 	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/projections"
+	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/slices/getrecurringmovements"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 	"github.com/jordisalazar/money-management/internal/shared/middleware"
 )

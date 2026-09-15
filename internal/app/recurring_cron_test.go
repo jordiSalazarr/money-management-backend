@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/domain"
+	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 )
 
 type fakeSource struct {
@@ -64,11 +65,16 @@ func TestRecurringCron_AllSuccess(t *testing.T) {
 	}
 }
 
-func TestRecurringCron_AlreadyExecuted_Skipped(t *testing.T) {
+// A repeat run for a date that already fired is the dedup working, not a
+// failure. The occurrence stream is named from the recurring movement and the
+// date and opened at NoStream, so the second attempt collides — see ADR 0002.
+// The aggregate-level ErrAlreadyExecutedToday guard this used to rely on is
+// gone, because the instruction stream no longer records firings at all.
+func TestRecurringCron_DateAlreadyFired_Skipped(t *testing.T) {
 	b := newBundleWithFakes(
 		&fakeSource{ids: []string{"rm-1"}},
 		func(context.Context, string, time.Time) error {
-			return recurringmovement.ErrAlreadyExecutedToday
+			return eventstore.ErrConcurrencyConflict
 		},
 	)
 	resp, _ := b.Run(context.Background())

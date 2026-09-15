@@ -176,6 +176,41 @@ func (a *Aggregate) Withdraw(userID string, amount int, currency, reason, catego
 	return nil
 }
 
+// Refund returns money to the wallet to undo a withdrawal that should not have
+// stood. It is the compensating action a process calls when a later step fails.
+//
+// It deliberately omits two checks that Deposit makes:
+//
+//   - the disabled check, because the invariant it protects is "no NEW money
+//     enters a closed pot", and returning money already taken out of that same
+//     pot is not new money. Without this, a user disabling a wallet between a
+//     transfer's debit and its compensation would strand the funds.
+//   - the category check, because a refund's category is not a user's choice.
+//
+// The idempotency, positive-amount and currency checks all stand. See ADR 0002.
+func (a *Aggregate) Refund(userID string, amount int, currency, reason, idempotencyKey string, now time.Time) error {
+	if idempotencyKey != "" && a.idempotencyKeys[idempotencyKey] {
+		return ErrAlreadyProcessed
+	}
+	if amount <= 0 {
+		return ErrInvalidAmount
+	}
+	if currency != a.currency {
+		return ErrCurrencyMismatch
+	}
+
+	a.raise(MoneyRefunded{
+		WalletID:       a.id,
+		UserID:         userID,
+		Amount:         amount,
+		Currency:       currency,
+		Reason:         reason,
+		RefundedAt:     now,
+		IdempotencyKey: idempotencyKey,
+	})
+	return nil
+}
+
 func (a *Aggregate) raise(event DomainEvent) {
 	a.Apply(event)
 	a.changes = append(a.changes, event)
@@ -196,6 +231,9 @@ func (a *Aggregate) Apply(event any) {
 		a.rememberIdempotencyKey(e.IdempotencyKey)
 	case MoneyWithdrawn:
 		a.balance -= e.Amount
+		a.rememberIdempotencyKey(e.IdempotencyKey)
+	case MoneyRefunded:
+		a.balance += e.Amount
 		a.rememberIdempotencyKey(e.IdempotencyKey)
 	case WalletDisabled:
 		a.disabled = true

@@ -84,20 +84,20 @@ func Create(
 	return agg, nil
 }
 
-func (a *Aggregate) ID() string             { return a.id }
-func (a *Aggregate) WalletID() string       { return a.walletID }
-func (a *Aggregate) UserID() string         { return a.userID }
-func (a *Aggregate) Type() string           { return a.typ }
-func (a *Aggregate) Amount() int            { return a.amount }
-func (a *Aggregate) Currency() string       { return a.currency }
-func (a *Aggregate) Frequency() string      { return a.frequency }
-func (a *Aggregate) Reason() string         { return a.reason }
-func (a *Aggregate) StartDate() time.Time   { return a.startDate }
-func (a *Aggregate) EndDate() time.Time     { return a.endDate }
+func (a *Aggregate) ID() string                  { return a.id }
+func (a *Aggregate) WalletID() string            { return a.walletID }
+func (a *Aggregate) UserID() string              { return a.userID }
+func (a *Aggregate) Type() string                { return a.typ }
+func (a *Aggregate) Amount() int                 { return a.amount }
+func (a *Aggregate) Currency() string            { return a.currency }
+func (a *Aggregate) Frequency() string           { return a.frequency }
+func (a *Aggregate) Reason() string              { return a.reason }
+func (a *Aggregate) StartDate() time.Time        { return a.startDate }
+func (a *Aggregate) EndDate() time.Time          { return a.endDate }
 func (a *Aggregate) Active() bool                { return a.active }
-func (a *Aggregate) LastExecutedDate() time.Time  { return a.lastExecutedDate }
-func (a *Aggregate) Version() int                 { return a.version }
-func (a *Aggregate) Changes() []DomainEvent       { return a.changes }
+func (a *Aggregate) LastExecutedDate() time.Time { return a.lastExecutedDate }
+func (a *Aggregate) Version() int                { return a.version }
+func (a *Aggregate) Changes() []DomainEvent      { return a.changes }
 
 func (a *Aggregate) Stop(stoppedBy string, reason string, now time.Time) error {
 	if !a.active {
@@ -111,21 +111,6 @@ func (a *Aggregate) Stop(stoppedBy string, reason string, now time.Time) error {
 		StoppedBy:           stoppedBy,
 		Reason:              reason,
 		StoppedAt:           now,
-	})
-	return nil
-}
-
-func (a *Aggregate) Execute(executedForDate time.Time, now time.Time) error {
-	if !a.active {
-		return ErrNotActive
-	}
-	if !a.lastExecutedDate.IsZero() && !a.lastExecutedDate.Before(executedForDate) {
-		return ErrAlreadyExecutedToday
-	}
-	a.raise(RecurringMovementExecuted{
-		RecurringMovementID: a.id,
-		ExecutedForDate:     executedForDate,
-		ExecutedAt:          now,
 	})
 	return nil
 }
@@ -149,8 +134,6 @@ func (a *Aggregate) Apply(event any) {
 		a.startDate = e.StartDate
 		a.endDate = e.EndDate
 		a.active = true
-	case RecurringMovementExecuted:
-		a.lastExecutedDate = e.ExecutedForDate
 	case RecurringMovementStopped:
 		a.active = false
 	}

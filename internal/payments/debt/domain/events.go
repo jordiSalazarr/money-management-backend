@@ -3,8 +3,10 @@ package debt
 import "time"
 
 const (
-	EventTypeDebtRecorded = "DebtRecorded"
-	EventTypeDebtSettled  = "DebtSettled"
+	EventTypeDebtRecorded            = "DebtRecorded"
+	EventTypeDebtSettlementRequested = "DebtSettlementRequested"
+	EventTypeDebtSettled             = "DebtSettled"
+	EventTypeDebtSettlementFailed    = "DebtSettlementFailed"
 )
 
 type DebtRecorded struct {
@@ -20,6 +22,24 @@ type DebtRecorded struct {
 
 func (e DebtRecorded) EventType() string { return EventTypeDebtRecorded }
 
+// DebtSettlementRequested is a person saying they have squared up. It is an
+// intention: the money has not moved yet, and the reactor may fail it.
+//
+// This event exists because DebtSettled used to be written here, before the
+// wallet movement was attempted. When that movement was rejected — an ordinary
+// insufficient balance was enough — the error was classified permanent and the
+// record dropped, leaving a debt that read settled against a wallet that had
+// paid nothing.
+type DebtSettlementRequested struct {
+	DebtID      string    `json:"debt_id"`
+	RequestedBy string    `json:"requested_by"`
+	RequestedAt time.Time `json:"requested_at"`
+}
+
+func (e DebtSettlementRequested) EventType() string { return EventTypeDebtSettlementRequested }
+
+// DebtSettled means the money has actually moved. It is written last, once the
+// wallet movement has gone through.
 type DebtSettled struct {
 	DebtID    string    `json:"debt_id"`
 	SettledBy string    `json:"settled_by"`
@@ -27,3 +47,13 @@ type DebtSettled struct {
 }
 
 func (e DebtSettled) EventType() string { return EventTypeDebtSettled }
+
+// DebtSettlementFailed means the wallet movement was refused, so the debt
+// stands. The reason is the same snake_case code the API would have returned.
+type DebtSettlementFailed struct {
+	DebtID   string    `json:"debt_id"`
+	Reason   string    `json:"reason"`
+	FailedAt time.Time `json:"failed_at"`
+}
+
+func (e DebtSettlementFailed) EventType() string { return EventTypeDebtSettlementFailed }

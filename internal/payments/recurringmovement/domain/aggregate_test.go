@@ -76,64 +76,64 @@ func TestCreate(t *testing.T) {
 		wantErr   error
 	}{
 		{
-			name: "missing wallet_id",
+			name:     "missing wallet_id",
 			walletID: "", userID: "u-1", typ: "deposit", amount: 1000, currency: "EUR", frequency: "MONTHLY", reason: "test", start: startDate,
 			wantErr: recurringmovement.ErrMissingWalletID,
 		},
 		{
-			name: "missing user_id",
+			name:     "missing user_id",
 			walletID: "w-1", userID: "", typ: "deposit", amount: 1000, currency: "EUR", frequency: "MONTHLY", reason: "test", start: startDate,
 			wantErr: recurringmovement.ErrMissingUserID,
 		},
 		{
-			name: "invalid type",
+			name:     "invalid type",
 			walletID: "w-1", userID: "u-1", typ: "transfer", amount: 1000, currency: "EUR", frequency: "MONTHLY", reason: "test", start: startDate,
 			wantErr: recurringmovement.ErrInvalidType,
 		},
 		{
-			name: "zero amount",
+			name:     "zero amount",
 			walletID: "w-1", userID: "u-1", typ: "deposit", amount: 0, currency: "EUR", frequency: "MONTHLY", reason: "test", start: startDate,
 			wantErr: recurringmovement.ErrInvalidAmount,
 		},
 		{
-			name: "negative amount",
+			name:     "negative amount",
 			walletID: "w-1", userID: "u-1", typ: "deposit", amount: -100, currency: "EUR", frequency: "MONTHLY", reason: "test", start: startDate,
 			wantErr: recurringmovement.ErrInvalidAmount,
 		},
 		{
-			name: "amount too high",
+			name:     "amount too high",
 			walletID: "w-1", userID: "u-1", typ: "deposit", amount: 10_000_001, currency: "EUR", frequency: "MONTHLY", reason: "test", start: startDate,
 			wantErr: recurringmovement.ErrInvalidAmount,
 		},
 		{
-			name: "invalid currency",
+			name:     "invalid currency",
 			walletID: "w-1", userID: "u-1", typ: "deposit", amount: 1000, currency: "GBP", frequency: "MONTHLY", reason: "test", start: startDate,
 			wantErr: recurringmovement.ErrInvalidCurrency,
 		},
 		{
-			name: "invalid frequency",
+			name:     "invalid frequency",
 			walletID: "w-1", userID: "u-1", typ: "deposit", amount: 1000, currency: "EUR", frequency: "YEARLY", reason: "test", start: startDate,
 			wantErr: recurringmovement.ErrInvalidFrequency,
 		},
 		{
-			name: "missing reason",
+			name:     "missing reason",
 			walletID: "w-1", userID: "u-1", typ: "deposit", amount: 1000, currency: "EUR", frequency: "MONTHLY", reason: "", start: startDate,
 			wantErr: recurringmovement.ErrMissingReason,
 		},
 		{
-			name: "start_date in the past",
+			name:     "start_date in the past",
 			walletID: "w-1", userID: "u-1", typ: "deposit", amount: 1000, currency: "EUR", frequency: "MONTHLY", reason: "test",
-			start: time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC),
+			start:   time.Date(2026, 4, 30, 0, 0, 0, 0, time.UTC),
 			wantErr: recurringmovement.ErrInvalidStartDate,
 		},
 		{
-			name: "end_date before start_date",
+			name:     "end_date before start_date",
 			walletID: "w-1", userID: "u-1", typ: "deposit", amount: 1000, currency: "EUR", frequency: "MONTHLY", reason: "test",
 			start: startDate, end: time.Date(2026, 4, 1, 0, 0, 0, 0, time.UTC),
 			wantErr: recurringmovement.ErrInvalidEndDate,
 		},
 		{
-			name: "end_date equal to start_date",
+			name:     "end_date equal to start_date",
 			walletID: "w-1", userID: "u-1", typ: "deposit", amount: 1000, currency: "EUR", frequency: "MONTHLY", reason: "test",
 			start: startDate, end: startDate,
 			wantErr: recurringmovement.ErrInvalidEndDate,
@@ -154,69 +154,9 @@ func TestCreate(t *testing.T) {
 	}
 }
 
-func TestExecute(t *testing.T) {
-	today := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
-	now := time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)
-	startDate := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
-
-	t.Run("executes active recurring movement", func(t *testing.T) {
-		agg, _ := recurringmovement.Create(
-			"rm-1", "wallet-1", "user-1", "deposit",
-			1000, "EUR", "MONTHLY", "Salary",
-			startDate, time.Time{}, now, today,
-		)
-
-		err := agg.Execute(today, now)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if agg.LastExecutedDate() != today {
-			t.Errorf("LastExecutedDate = %v, want %v", agg.LastExecutedDate(), today)
-		}
-		found := false
-		for _, c := range agg.Changes() {
-			if c.EventType() == "RecurringMovementExecuted" {
-				found = true
-			}
-		}
-		if !found {
-			t.Error("expected RecurringMovementExecuted event in changes")
-		}
-	})
-
-	t.Run("cannot execute twice for same date", func(t *testing.T) {
-		agg, _ := recurringmovement.Create(
-			"rm-1", "wallet-1", "user-1", "deposit",
-			1000, "EUR", "MONTHLY", "Salary",
-			startDate, time.Time{}, now, today,
-		)
-		_ = agg.Execute(today, now)
-
-		err := agg.Execute(today, now)
-		if err != recurringmovement.ErrAlreadyExecutedToday {
-			t.Errorf("err = %v, want %v", err, recurringmovement.ErrAlreadyExecutedToday)
-		}
-	})
-
-	t.Run("can execute for next day after previous execution", func(t *testing.T) {
-		agg, _ := recurringmovement.Create(
-			"rm-1", "wallet-1", "user-1", "deposit",
-			1000, "EUR", "DAILY", "Salary",
-			startDate, time.Time{}, now, today,
-		)
-		_ = agg.Execute(today, now)
-
-		tomorrow := today.AddDate(0, 0, 1)
-		err := agg.Execute(tomorrow, now)
-		if err != nil {
-			t.Fatalf("unexpected error: %v", err)
-		}
-		if agg.LastExecutedDate() != tomorrow {
-			t.Errorf("LastExecutedDate = %v, want %v", agg.LastExecutedDate(), tomorrow)
-		}
-	})
-}
-
+// Firing a recurring movement is no longer this aggregate's job: each firing
+// is its own occurrence process, on its own stream. See ADR 0002. The tests
+// that lived here for Execute now live in processes/occurrence.
 func TestStop(t *testing.T) {
 	today := time.Date(2026, 5, 1, 0, 0, 0, 0, time.UTC)
 	now := time.Date(2026, 5, 1, 10, 0, 0, 0, time.UTC)
@@ -293,19 +233,6 @@ func TestStop(t *testing.T) {
 		}
 	})
 
-	t.Run("cannot execute after stop", func(t *testing.T) {
-		agg, _ := recurringmovement.Create(
-			"rm-1", "wallet-1", "user-1", "deposit",
-			1000, "EUR", "MONTHLY", "Salary",
-			startDate, time.Time{}, now, today,
-		)
-		_ = agg.Stop("user-1", "", now)
-
-		err := agg.Execute(today, now)
-		if err != recurringmovement.ErrNotActive {
-			t.Errorf("err = %v, want %v", err, recurringmovement.ErrNotActive)
-		}
-	})
 }
 
 func TestAggregate_Apply_RecurringMovementRegistered(t *testing.T) {

@@ -1,15 +1,15 @@
 // cmd/devtools is the local-dev companion binary. Two subcommands:
 //
-//   reset — wipe every state surface the dev stack touches so the next
-//           boot starts from a known empty world. Drops + recreates the
-//           LocalStack events table, truncates the projection tables in
-//           Postgres, and runs migrations to repopulate schema-only.
+//	reset — wipe every state surface the dev stack touches so the next
+//	        boot starts from a known empty world. Drops + recreates the
+//	        LocalStack events table, truncates the projection tables in
+//	        Postgres, and runs migrations to repopulate schema-only.
 //
-//   seed  — populate the system with a handful of realistic wallets,
-//           movements, and a recurring movement so the UI is immediately
-//           usable. Operates over HTTP against a running cmd/server, so
-//           the seed code goes through the exact same command handlers
-//           production traffic does (no second wiring path to drift).
+//	seed  — populate the system with a handful of realistic wallets,
+//	        movements, and a recurring movement so the UI is immediately
+//	        usable. Operates over HTTP against a running cmd/server, so
+//	        the seed code goes through the exact same command handlers
+//	        production traffic does (no second wiring path to drift).
 //
 // Both subcommands honour the same env vars cmd/server reads
 // (EVENTS_TABLE, AURORA_URL, AWS_*), with safe defaults matching the

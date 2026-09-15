@@ -1,0 +1,9 @@
+{
+  "wallet_id": "11111111-1111-1111-1111-111111111111",
+  "user_id": "22222222-2222-2222-2222-222222222222",
+  "amount": 4200,
+  "currency": "EUR",
+  "reason": "transfer tx-1 could not be credited",
+  "refunded_at": "2026-01-02T03:04:05Z",
+  "idempotency_key": "tx-1:refund"
+}

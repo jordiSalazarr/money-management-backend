@@ -2,90 +2,38 @@ package disablewallet
 
 import (
 	"context"
-	"encoding/json"
 
-	"github.com/google/uuid"
-	"github.com/jordisalazar/money-management/internal/shared/eventstore"
+	"github.com/jordisalazar/money-management/internal/payments/streams"
 	"github.com/jordisalazar/money-management/internal/payments/wallet/domain"
+	"github.com/jordisalazar/money-management/internal/shared/eventstore"
+	"github.com/jordisalazar/money-management/internal/shared/middleware"
 )
 
 type CommandHandler struct {
 	store eventstore.Store
+	codec *eventstore.Codec
 }
 
-func NewCommandHandler(store eventstore.Store) *CommandHandler {
-	return &CommandHandler{store: store}
+func NewCommandHandler(store eventstore.Store, codec *eventstore.Codec) *CommandHandler {
+	return &CommandHandler{store: store, codec: codec}
 }
 
 func (h *CommandHandler) Handle(ctx context.Context, cmd Command) error {
-	events, err := h.store.Load(ctx, cmd.WalletID)
+	stream := streams.Wallet(cmd.WalletID)
+
+	agg := wallet.NewAggregate()
+	expected, err := eventstore.Rehydrate(ctx, h.store, h.codec, stream, agg.Apply)
 	if err != nil {
 		return err
 	}
-
-	agg := wallet.NewAggregate()
-	for _, e := range events {
-		raw, err := unmarshalEvent(e)
-		if err != nil {
-			return err
-		}
-		agg.Apply(raw)
+	if expected == eventstore.NoStream {
+		return eventstore.ErrAggregateNotFound
 	}
 
 	if err := agg.Disable(cmd.UserID, cmd.Reason, cmd.DisabledAt); err != nil {
 		return err
 	}
 
-	envelopes := make([]eventstore.Event, 0, len(agg.Changes()))
-	for _, change := range agg.Changes() {
-		payload, err := json.Marshal(change)
-		if err != nil {
-			return err
-		}
-		envelopes = append(envelopes, eventstore.Event{
-			EventID:       uuid.New().String(),
-			AggregateID:   cmd.WalletID,
-			AggregateType: "wallet",
-			EventType:     change.EventType(),
-			Payload:       payload,
-			OccurredAt:    cmd.DisabledAt,
-		})
-	}
-
-	if err := h.store.Append(ctx, cmd.WalletID, envelopes, len(events)); err != nil {
-		return err
-	}
-
-	return nil
-}
-
-func unmarshalEvent(e eventstore.Event) (any, error) {
-	switch e.EventType {
-	case wallet.EventTypeWalletAdded:
-		var evt wallet.WalletAdded
-		if err := json.Unmarshal(e.Payload, &evt); err != nil {
-			return nil, err
-		}
-		return evt, nil
-	case wallet.EventTypeMoneyDeposited:
-		var evt wallet.MoneyDeposited
-		if err := json.Unmarshal(e.Payload, &evt); err != nil {
-			return nil, err
-		}
-		return evt, nil
-	case wallet.EventTypeMoneyWithdrawn:
-		var evt wallet.MoneyWithdrawn
-		if err := json.Unmarshal(e.Payload, &evt); err != nil {
-			return nil, err
-		}
-		return evt, nil
-	case wallet.EventTypeWalletDisabled:
-		var evt wallet.WalletDisabled
-		if err := json.Unmarshal(e.Payload, &evt); err != nil {
-			return nil, err
-		}
-		return evt, nil
-	default:
-		return nil, nil
-	}
+	return eventstore.AppendChanges(ctx, h.store, h.codec, stream, expected,
+		agg.Changes(), middleware.GetCorrelationID(ctx), cmd.DisabledAt)
 }

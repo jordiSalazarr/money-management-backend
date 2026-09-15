@@ -7,10 +7,10 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jordisalazar/money-management/internal/shared/middleware"
+	"github.com/jordisalazar/money-management/internal/payments/wallet/projections"
 	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/getuserwallets"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
-	"github.com/jordisalazar/money-management/internal/payments/wallet/projections"
+	"github.com/jordisalazar/money-management/internal/shared/middleware"
 )
 
 func setupRouter() (*gin.Engine, *projections.WalletsProjector) {

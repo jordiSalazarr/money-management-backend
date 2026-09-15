@@ -52,7 +52,30 @@ func BuildEngine(ctx context.Context, log logger.Logger, opts Options) (*gin.Eng
 	mountVoice := mountQueries // voice depends on projection stores too
 	logVoiceDecision(log, mountQueries, voiceOpts)
 
-	registerRoutes(ctx, r, d.store, voiceOpts, transOpts, mountVoice, d.queries, applyMountQueries(opts, mountQueries))
+	registerRoutes(ctx, r, d.store, d.codec, voiceOpts, transOpts, mountVoice, d.queries, applyMountQueries(opts, mountQueries))
+
+	// The read side runs in-process when the store has a global log.
+	//
+	// This is no longer optional in memory mode: the store used to fan events
+	// out to projectors itself through a Subscribe hook, and that hook is gone
+	// — projections are driven by a real subscription now, the same one the
+	// deployed projector uses. Without this, GET handlers would serve empty
+	// read models and no process would ever make progress.
+	if opts.RunAsync && d.feed != nil {
+		cleanupAsync, err := RunAsync(ctx, log, d, opts.Async)
+		if err != nil {
+			cleanup()
+			return nil, nil, fmt.Errorf("starting async pipeline: %w", err)
+		}
+		storeCleanup := cleanup
+		cleanup = func() {
+			cleanupAsync()
+			storeCleanup()
+		}
+	} else if opts.RunAsync {
+		log.Warn("async pipeline not started: this store has no global log to subscribe to",
+			"mode", string(mode))
+	}
 
 	return r, cleanup, nil
 }

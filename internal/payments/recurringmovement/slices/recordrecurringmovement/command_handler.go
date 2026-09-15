@@ -2,20 +2,22 @@ package recordrecurringmovement
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
 	"github.com/google/uuid"
 	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/domain"
+	"github.com/jordisalazar/money-management/internal/payments/streams"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
+	"github.com/jordisalazar/money-management/internal/shared/middleware"
 )
 
 type CommandHandler struct {
 	store eventstore.Store
+	codec *eventstore.Codec
 }
 
-func NewCommandHandler(store eventstore.Store) *CommandHandler {
-	return &CommandHandler{store: store}
+func NewCommandHandler(store eventstore.Store, codec *eventstore.Codec) *CommandHandler {
+	return &CommandHandler{store: store, codec: codec}
 }
 
 func (h *CommandHandler) Handle(ctx context.Context, cmd Command) (string, error) {
@@ -32,25 +34,9 @@ func (h *CommandHandler) Handle(ctx context.Context, cmd Command) (string, error
 		return "", err
 	}
 
-	envelopes := make([]eventstore.Event, 0, len(agg.Changes()))
-	for _, change := range agg.Changes() {
-		payload, err := json.Marshal(change)
-		if err != nil {
-			return "", err
-		}
-		envelopes = append(envelopes, eventstore.Event{
-			EventID:       uuid.New().String(),
-			AggregateID:   id,
-			AggregateType: "recurring_movement",
-			EventType:     change.EventType(),
-			Payload:       payload,
-			OccurredAt:    now,
-		})
-	}
-
-	if err := h.store.Append(ctx, id, envelopes, 0); err != nil {
+	if err := eventstore.AppendChanges(ctx, h.store, h.codec, streams.RecurringMovement(id),
+		eventstore.NoStream, agg.Changes(), middleware.GetCorrelationID(ctx), now); err != nil {
 		return "", err
 	}
-
 	return id, nil
 }

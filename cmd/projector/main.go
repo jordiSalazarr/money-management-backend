@@ -1,51 +1,42 @@
-// cmd/projector is the Kinesis-triggered Lambda that consumes the
-// DynamoDB → Kinesis Data Streams export from the events table and
-// writes read-models into Aurora.
+// Command projector subscribes to the event log and keeps the read models up
+// to date.
 //
-// The same per-shard ordering guarantee that DynamoDB provides for
-// version writes inside one aggregate flows through to Kinesis because
-// the shard hashing uses the DDB partition key (aggregate_id) — every
-// event for one aggregate lands on the same shard and is delivered in
-// order. Projectors don't need cross-aggregate ordering.
+// It used to be a Lambda fed by a DynamoDB → Kinesis export. It is now a
+// long-running subscriber, which is the same thing the in-process dev
+// pipeline does — so local and deployed topology finally match.
 //
-// Init-time wiring (pool + dispatcher) amortises across warm
-// invocations. Failure to construct panics; the function 500s every
-// invocation until a fixed binary redeploys, which is the right outcome
-// because silently running without Aurora would corrupt nothing on the
-// write path but mean projections fall behind invisibly.
+// It refuses to start against a store with no global log. DynamoDB is one:
+// until the KurrentDB adapter lands in phase 2, this binary has nothing to
+// subscribe to, and failing loudly beats silently projecting nothing.
 package main
 
 import (
 	"context"
+	"errors"
 	"log"
 	"os"
-
-	"github.com/aws/aws-lambda-go/events"
-	"github.com/aws/aws-lambda-go/lambda"
+	"os/signal"
+	"syscall"
 
 	"github.com/jordisalazar/money-management/internal/app"
 	"github.com/jordisalazar/money-management/pkg/logger"
 )
 
-var bundle *app.ProjectorBundle
-
-func init() {
-	if os.Getenv("SKIP_LAMBDA_INIT") == "1" {
-		return
-	}
+func main() {
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
 
 	logr := logger.New()
-	b, err := app.BuildProjector(context.Background(), logr, app.ProjectorOptions{})
+	bundle, err := app.BuildProjector(ctx, logr, app.ProjectorOptions{})
 	if err != nil {
 		log.Fatalf("build projector: %v", err)
 	}
-	bundle = b
-}
+	defer bundle.Cleanup()
 
-func handler(ctx context.Context, e events.KinesisEvent) error {
-	return bundle.Dispatcher.HandleBatch(ctx, e.Records)
-}
-
-func main() {
-	lambda.Start(handler)
+	logr.Info("projector running")
+	if err := bundle.Run(ctx); err != nil && !errors.Is(err, context.Canceled) {
+		logr.Error("projector stopped", "error", err)
+		os.Exit(1)
+	}
+	logr.Info("projector stopped cleanly")
 }

@@ -9,14 +9,14 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/domain"
+	"github.com/jordisalazar/money-management/internal/payments/eventcatalog"
 	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/slices/recordrecurringmovement"
 	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/slices/stoprecurringmovement"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 	"github.com/jordisalazar/money-management/internal/shared/middleware"
 )
 
-func setupRouter(userID string) (*gin.Engine, eventstore.Store) {
+func setupRouter(userID string) (*gin.Engine, eventstore.Store, *eventstore.Codec) {
 	gin.SetMode(gin.TestMode)
 	r := gin.New()
 	r.Use(func(c *gin.Context) {
@@ -26,12 +26,10 @@ func setupRouter(userID string) (*gin.Engine, eventstore.Store) {
 		c.Next()
 	})
 	store := eventstore.NewMemoryStore()
-	store.RegisterEvent(recurringmovement.EventTypeRecurringMovementRegistered, func() any { return &recurringmovement.RecurringMovementRegistered{} })
-	store.RegisterEvent(recurringmovement.EventTypeRecurringMovementExecuted, func() any { return &recurringmovement.RecurringMovementExecuted{} })
-	store.RegisterEvent(recurringmovement.EventTypeRecurringMovementStopped, func() any { return &recurringmovement.RecurringMovementStopped{} })
-	recordrecurringmovement.RegisterCommands(r, store)
-	stoprecurringmovement.RegisterCommands(r, store)
-	return r, store
+	codec := eventcatalog.NewCodec()
+	recordrecurringmovement.RegisterCommands(r, store, codec)
+	stoprecurringmovement.RegisterCommands(r, store, codec)
+	return r, store, codec
 }
 
 func createRecurringMovement(t *testing.T, router *gin.Engine) string {
@@ -61,7 +59,7 @@ func createRecurringMovement(t *testing.T, router *gin.Engine) string {
 }
 
 func TestStopRecurringMovement_Success(t *testing.T) {
-	router, _ := setupRouter("user-1")
+	router, _, _ := setupRouter("user-1")
 	id := createRecurringMovement(t, router)
 
 	body := map[string]any{"reason": "No longer needed"}
@@ -89,7 +87,7 @@ func TestStopRecurringMovement_Success(t *testing.T) {
 }
 
 func TestStopRecurringMovement_EmptyBody(t *testing.T) {
-	router, _ := setupRouter("user-1")
+	router, _, _ := setupRouter("user-1")
 	id := createRecurringMovement(t, router)
 
 	req := httptest.NewRequest(http.MethodPost, "/recurring-movements/"+id+"/stop", nil)
@@ -104,7 +102,7 @@ func TestStopRecurringMovement_EmptyBody(t *testing.T) {
 }
 
 func TestStopRecurringMovement_NotFound(t *testing.T) {
-	router, _ := setupRouter("user-1")
+	router, _, _ := setupRouter("user-1")
 
 	req := httptest.NewRequest(http.MethodPost, "/recurring-movements/nonexistent-id/stop", nil)
 	req.Header.Set("Content-Type", "application/json")
@@ -124,7 +122,7 @@ func TestStopRecurringMovement_NotFound(t *testing.T) {
 }
 
 func TestStopRecurringMovement_AlreadyStopped(t *testing.T) {
-	router, _ := setupRouter("user-1")
+	router, _, _ := setupRouter("user-1")
 	id := createRecurringMovement(t, router)
 
 	// Stop once
@@ -155,7 +153,7 @@ func TestStopRecurringMovement_AlreadyStopped(t *testing.T) {
 
 func TestStopRecurringMovement_NotOwner(t *testing.T) {
 	// Create with user-1
-	routerUser1, store := setupRouter("user-1")
+	routerUser1, store, codec := setupRouter("user-1")
 	id := createRecurringMovement(t, routerUser1)
 
 	// Try to stop with user-2
@@ -167,7 +165,7 @@ func TestStopRecurringMovement_NotOwner(t *testing.T) {
 		)
 		c.Next()
 	})
-	stoprecurringmovement.RegisterCommands(routerUser2, store)
+	stoprecurringmovement.RegisterCommands(routerUser2, store, codec)
 
 	req := httptest.NewRequest(http.MethodPost, "/recurring-movements/"+id+"/stop", nil)
 	req.Header.Set("Content-Type", "application/json")

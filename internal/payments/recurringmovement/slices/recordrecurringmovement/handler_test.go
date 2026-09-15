@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/gin-gonic/gin"
+	"github.com/jordisalazar/money-management/internal/payments/eventcatalog"
 	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/slices/recordrecurringmovement"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 	"github.com/jordisalazar/money-management/internal/shared/middleware"
@@ -23,7 +24,8 @@ func setupRouter() *gin.Engine {
 		c.Next()
 	})
 	store := eventstore.NewMemoryStore()
-	recordrecurringmovement.RegisterCommands(r, store)
+	codec := eventcatalog.NewCodec()
+	recordrecurringmovement.RegisterCommands(r, store, codec)
 	return r
 }
 

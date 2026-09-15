@@ -24,6 +24,7 @@ func RegisterRoutes(
 	ctx context.Context,
 	router *gin.Engine,
 	store eventstore.Store,
+	codec *eventstore.Codec,
 	opts ClientOptions,
 	transOpts TranscriberOptions,
 	walletStore wprojections.WalletStore,
@@ -39,7 +40,7 @@ func RegisterRoutes(
 		return err
 	}
 	resolver := NewResolver(walletStore, debtStore, recurringStore)
-	executor := NewExecutor(store, resolver)
+	executor := NewExecutor(store, codec, resolver)
 	handler := NewHandler(client, transcriber, executor, resolver)
 
 	router.POST("/voice/command", handler.HandleVoiceCommand)

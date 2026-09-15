@@ -5,8 +5,8 @@ import (
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 )
 
-func RegisterCommands(router *gin.Engine, store eventstore.Store) {
-	cmdHandler := NewCommandHandler(store)
+func RegisterCommands(router *gin.Engine, store eventstore.Store, codec *eventstore.Codec) {
+	cmdHandler := NewCommandHandler(store, codec)
 	handler := NewHandler(cmdHandler)
 
 	router.POST("/debts/:id/settle", handler.SettleDebt)

@@ -10,8 +10,10 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"github.com/jordisalazar/money-management/internal/payments/eventcatalog"
+	occurrencedomain "github.com/jordisalazar/money-management/internal/payments/processes/occurrence/domain"
 	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/domain"
-	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/slices/executerecurringmovement"
+	"github.com/jordisalazar/money-management/internal/payments/streams"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 	"github.com/jordisalazar/money-management/pkg/logger"
 )
@@ -23,9 +25,8 @@ type DueItemsSource interface {
 	DueToday(ctx context.Context) ([]string, error)
 }
 
-// DispatchExecuteFunc dispatches an ExecuteRecurringMovement command.
-// Real-life this wraps executerecurringmovement.CommandHandler.Handle;
-// tests inject a fake to assert call shape.
+// DispatchExecuteFunc opens one occurrence of a recurring movement for a
+// given date. Tests inject a fake to assert call shape.
 type DispatchExecuteFunc func(ctx context.Context, id string, executedFor time.Time) error
 
 // RecurringCronOptions configures BuildRecurringCron. AuroraURL and
@@ -85,23 +86,18 @@ func BuildRecurringCron(ctx context.Context, log logger.Logger, opts RecurringCr
 		pool.Close()
 		return nil, fmt.Errorf("building dynamo event store: %w", err)
 	}
-	registerDomainEvents(store)
-	handler := executerecurringmovement.NewCommandHandler(store)
+	codec := eventcatalog.NewCodec()
+	dispatch := NewDueDispatcher(store, codec)
 
 	if log != nil {
 		log.Info("recurring cron wired", "events_table", eventsTable, "aurora_host_sanitised", sanitiseDSN(auroraURL))
 	}
 
 	return &RecurringCronBundle{
-		log:    slog.Default(),
-		source: &auroraDueItemsSource{pool: pool},
-		dispatch: func(ctx context.Context, id string, executedFor time.Time) error {
-			return handler.Handle(ctx, executerecurringmovement.Command{
-				RecurringMovementID: id,
-				ExecutedForDate:     executedFor,
-			})
-		},
-		Cleanup: pool.Close,
+		log:      slog.Default(),
+		source:   &auroraDueItemsSource{pool: pool},
+		dispatch: dispatch,
+		Cleanup:  pool.Close,
 	}, nil
 }
 
@@ -130,8 +126,11 @@ func (b *RecurringCronBundle) Run(ctx context.Context) (RecurringCronResponse, e
 		case err == nil:
 			resp.DispatchedCount++
 			b.log.Info("recurring cron: dispatched", "recurring_movement_id", id)
-		case errors.Is(err, recurringmovement.ErrAlreadyExecutedToday),
+		case errors.Is(err, eventstore.ErrConcurrencyConflict),
 			errors.Is(err, recurringmovement.ErrNotActive):
+			// A concurrency conflict here is the dedup working: the occurrence
+			// stream for this date already exists, so the day has already been
+			// offered. See ADR 0002 — the stream name is the idempotency key.
 			resp.SkippedCount++
 			b.log.Info("recurring cron: skipped", "recurring_movement_id", id, "reason", err)
 		default:
@@ -167,4 +166,46 @@ func (s *auroraDueItemsSource) DueToday(ctx context.Context) ([]string, error) {
 		ids = append(ids, id)
 	}
 	return ids, rows.Err()
+}
+
+// NewDueDispatcher returns the cron's dispatch function: it opens one
+// occurrence per recurring movement per date.
+//
+// The occurrence goes on its own stream, named from the recurring movement and
+// the date, and is appended at ExpectedRevision.NoStream. A second cron run for
+// the same date therefore fails with ErrConcurrencyConflict rather than firing
+// twice — there is no dedup table and no idempotency key to remember to pass,
+// because the stream identity IS the key.
+//
+// Note it only opens the occurrence. Moving the money is the occurrence
+// reactor's job, and its outcome — executed or skipped — is recorded there.
+// That separation is the fix for the old behaviour, where the cron marked a
+// date executed before anything had been paid.
+func NewDueDispatcher(store eventstore.Store, codec *eventstore.Codec) DispatchExecuteFunc {
+	return func(ctx context.Context, recurringMovementID string, forDate time.Time) error {
+		rm := recurringmovement.NewAggregate()
+		expected, err := eventstore.Rehydrate(ctx, store, codec,
+			streams.RecurringMovement(recurringMovementID), rm.Apply)
+		if err != nil {
+			return fmt.Errorf("loading recurring movement %s: %w", recurringMovementID, err)
+		}
+		if expected == eventstore.NoStream {
+			return fmt.Errorf("loading recurring movement %s: %w", recurringMovementID, eventstore.ErrAggregateNotFound)
+		}
+		if !rm.Active() {
+			return recurringmovement.ErrNotActive
+		}
+
+		stream := streams.Occurrence(recurringMovementID, forDate)
+		occ, err := occurrencedomain.Due(
+			stream.ID, recurringMovementID, rm.WalletID(), rm.UserID(), rm.Type(),
+			rm.Amount(), rm.Currency(), rm.Reason(), forDate, time.Now().UTC(),
+		)
+		if err != nil {
+			return fmt.Errorf("opening occurrence %s: %w", stream, err)
+		}
+
+		return eventstore.AppendChanges(ctx, store, codec, stream,
+			eventstore.NoStream, occ.Changes(), "", time.Now().UTC())
+	}
 }

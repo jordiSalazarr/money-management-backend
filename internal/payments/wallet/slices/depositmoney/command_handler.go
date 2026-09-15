@@ -2,35 +2,33 @@ package depositmoney
 
 import (
 	"context"
-	"encoding/json"
 	"time"
 
-	"github.com/google/uuid"
+	"github.com/jordisalazar/money-management/internal/payments/streams"
 	"github.com/jordisalazar/money-management/internal/payments/wallet/domain"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
+	"github.com/jordisalazar/money-management/internal/shared/middleware"
 )
 
 type CommandHandler struct {
 	store eventstore.Store
+	codec *eventstore.Codec
 }
 
-func NewCommandHandler(store eventstore.Store) *CommandHandler {
-	return &CommandHandler{store: store}
+func NewCommandHandler(store eventstore.Store, codec *eventstore.Codec) *CommandHandler {
+	return &CommandHandler{store: store, codec: codec}
 }
 
 func (h *CommandHandler) Handle(ctx context.Context, cmd Command) (int, error) {
-	events, err := h.store.Load(ctx, cmd.WalletID)
+	stream := streams.Wallet(cmd.WalletID)
+
+	agg := wallet.NewAggregate()
+	expected, err := eventstore.Rehydrate(ctx, h.store, h.codec, stream, agg.Apply)
 	if err != nil {
 		return 0, err
 	}
-
-	agg := wallet.NewAggregate()
-	for _, e := range events {
-		raw, err := unmarshalEvent(e)
-		if err != nil {
-			return 0, err
-		}
-		agg.Apply(raw)
+	if expected == eventstore.NoStream {
+		return 0, eventstore.ErrAggregateNotFound
 	}
 
 	now := time.Now().UTC()
@@ -38,50 +36,9 @@ func (h *CommandHandler) Handle(ctx context.Context, cmd Command) (int, error) {
 		return 0, err
 	}
 
-	envelopes := make([]eventstore.Event, 0, len(agg.Changes()))
-	for _, change := range agg.Changes() {
-		payload, err := json.Marshal(change)
-		if err != nil {
-			return 0, err
-		}
-		envelopes = append(envelopes, eventstore.Event{
-			EventID:       uuid.New().String(),
-			AggregateID:   cmd.WalletID,
-			AggregateType: "wallet",
-			EventType:     change.EventType(),
-			Payload:       payload,
-			OccurredAt:    now,
-		})
-	}
-
-	if err := h.store.Append(ctx, cmd.WalletID, envelopes, len(events)); err != nil {
+	if err := eventstore.AppendChanges(ctx, h.store, h.codec, stream, expected,
+		agg.Changes(), middleware.GetCorrelationID(ctx), now); err != nil {
 		return 0, err
 	}
-
 	return agg.Balance(), nil
-}
-
-func unmarshalEvent(e eventstore.Event) (any, error) {
-	switch e.EventType {
-	case wallet.EventTypeWalletAdded:
-		var evt wallet.WalletAdded
-		if err := json.Unmarshal(e.Payload, &evt); err != nil {
-			return nil, err
-		}
-		return evt, nil
-	case wallet.EventTypeMoneyDeposited:
-		var evt wallet.MoneyDeposited
-		if err := json.Unmarshal(e.Payload, &evt); err != nil {
-			return nil, err
-		}
-		return evt, nil
-	case wallet.EventTypeWalletDisabled:
-		var evt wallet.WalletDisabled
-		if err := json.Unmarshal(e.Payload, &evt); err != nil {
-			return nil, err
-		}
-		return evt, nil
-	default:
-		return nil, nil
-	}
 }

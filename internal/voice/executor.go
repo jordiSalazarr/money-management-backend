@@ -9,12 +9,11 @@ import (
 
 	"github.com/jordisalazar/money-management/internal/payments/debt/slices/recorddebt"
 	"github.com/jordisalazar/money-management/internal/payments/debt/slices/settledebt"
+	"github.com/jordisalazar/money-management/internal/payments/processes/transfer/slices/requesttransfer"
 	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/slices/recordrecurringmovement"
 	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/slices/stoprecurringmovement"
-	"github.com/jordisalazar/money-management/internal/payments/transaction/slices/transfermoney"
 	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/addwallet"
 	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/depositmoney"
-	walletservices "github.com/jordisalazar/money-management/internal/payments/wallet/services"
 	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/withdrawmoney"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 )
@@ -22,11 +21,12 @@ import (
 // Executor routes a Claude tool call to the appropriate command handler.
 type Executor struct {
 	store    eventstore.Store
+	codec    *eventstore.Codec
 	resolver *Resolver
 }
 
-func NewExecutor(store eventstore.Store, resolver *Resolver) *Executor {
-	return &Executor{store: store, resolver: resolver}
+func NewExecutor(store eventstore.Store, codec *eventstore.Codec, resolver *Resolver) *Executor {
+	return &Executor{store: store, codec: codec, resolver: resolver}
 }
 
 // ExecuteResult is returned after executing a command.
@@ -147,7 +147,7 @@ func (e *Executor) createWallet(ctx context.Context, userID string, input json.R
 		Category:      category,
 	}
 
-	handler := addwallet.NewCommandHandler(e.store)
+	handler := addwallet.NewCommandHandler(e.store, e.codec)
 	_, err := handler.Handle(ctx, cmd)
 	if err != nil {
 		return &ExecuteResult{Message: fmt.Sprintf("Failed to create wallet: %s", err.Error())}
@@ -194,7 +194,7 @@ func (e *Executor) depositMoney(ctx context.Context, userID string, input json.R
 		Category: category,
 	}
 
-	handler := depositmoney.NewCommandHandler(e.store)
+	handler := depositmoney.NewCommandHandler(e.store, e.codec)
 	_, err = handler.Handle(ctx, cmd)
 	if err != nil {
 		return &ExecuteResult{Message: fmt.Sprintf("Failed to deposit: %s", err.Error())}
@@ -240,7 +240,7 @@ func (e *Executor) withdrawMoney(ctx context.Context, userID string, input json.
 		Category: category,
 	}
 
-	handler := withdrawmoney.NewCommandHandler(e.store)
+	handler := withdrawmoney.NewCommandHandler(e.store, e.codec)
 	_, err = handler.Handle(ctx, cmd)
 	if err != nil {
 		return &ExecuteResult{Message: fmt.Sprintf("Failed to withdraw: %s", err.Error())}
@@ -291,24 +291,26 @@ func (e *Executor) transferMoney(ctx context.Context, userID string, input json.
 
 	currency := defaultStr(in.Currency, fromResult.Wallet.Currency)
 
-	cmd := walletservices.TransferMoneyCommand{
+	handler := requesttransfer.NewCommandHandler(e.store, e.codec)
+	if _, err = handler.Handle(ctx, requesttransfer.Command{
 		UserID:       userID,
 		FromWalletID: fromResult.Wallet.ID,
 		ToWalletID:   toResult.Wallet.ID,
 		Amount:       in.Amount,
 		Currency:     currency,
 		Reason:       in.Reason,
+	}); err != nil {
+		return &ExecuteResult{Message: fmt.Sprintf("Failed to request transfer: %s", err.Error())}
 	}
 
-	handler := transfermoney.NewCommandHandler(e.store)
-	_, err = handler.Handle(ctx, cmd)
-	if err != nil {
-		return &ExecuteResult{Message: fmt.Sprintf("Failed to transfer: %s", err.Error())}
-	}
-
+	// A transfer is requested, not performed: the reactor carries it out and
+	// it can still fail. The wording has to be honest about that, because
+	// telling someone their money has moved when it has only been accepted is
+	// exactly the kind of lie this migration exists to remove.
 	return &ExecuteResult{
 		Success: true,
-		Message: fmt.Sprintf("Transferred %s from %s to %s", formatCents(in.Amount, currency), fromResult.Wallet.Name, toResult.Wallet.Name),
+		Message: fmt.Sprintf("Started a transfer of %s from %s to %s — it will complete shortly",
+			formatCents(in.Amount, currency), fromResult.Wallet.Name, toResult.Wallet.Name),
 	}
 }
 
@@ -349,7 +351,7 @@ func (e *Executor) recordDebt(ctx context.Context, userID string, input json.Raw
 		Reason:    in.Reason,
 	}
 
-	handler := recorddebt.NewCommandHandler(e.store)
+	handler := recorddebt.NewCommandHandler(e.store, e.codec)
 	_, err := handler.Handle(ctx, cmd)
 	if err != nil {
 		return &ExecuteResult{Message: fmt.Sprintf("Failed to record debt: %s", err.Error())}
@@ -391,7 +393,7 @@ func (e *Executor) settleDebt(ctx context.Context, userID string, input json.Raw
 		SettledBy: userID,
 	}
 
-	handler := settledebt.NewCommandHandler(e.store)
+	handler := settledebt.NewCommandHandler(e.store, e.codec)
 	if err := handler.Handle(ctx, cmd); err != nil {
 		return &ExecuteResult{Message: fmt.Sprintf("Failed to settle debt: %s", err.Error())}
 	}
@@ -454,7 +456,7 @@ func (e *Executor) createRecurringMovement(ctx context.Context, userID string, i
 		EndDate:   endDate,
 	}
 
-	handler := recordrecurringmovement.NewCommandHandler(e.store)
+	handler := recordrecurringmovement.NewCommandHandler(e.store, e.codec)
 	_, err = handler.Handle(ctx, cmd)
 	if err != nil {
 		return &ExecuteResult{Message: fmt.Sprintf("Failed to create recurring movement: %s", err.Error())}
@@ -493,7 +495,7 @@ func (e *Executor) stopRecurringMovement(ctx context.Context, userID string, inp
 		Reason:              defaultStr(in.StopReason, "Stopped via voice command"),
 	}
 
-	handler := stoprecurringmovement.NewCommandHandler(e.store)
+	handler := stoprecurringmovement.NewCommandHandler(e.store, e.codec)
 	_, err = handler.Handle(ctx, cmd)
 	if err != nil {
 		return &ExecuteResult{Message: fmt.Sprintf("Failed to stop recurring movement: %s", err.Error())}

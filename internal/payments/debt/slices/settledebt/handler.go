@@ -84,6 +84,12 @@ func mapError(err error) (int, ErrorResponse) {
 		return http.StatusBadRequest, ErrorResponse{ErrorCode: "missing_settled_by", Message: err.Error()}
 	case errors.Is(err, debt.ErrDebtAlreadySettled):
 		return http.StatusBadRequest, ErrorResponse{ErrorCode: "debt_already_settled", Message: err.Error()}
+	case errors.Is(err, debt.ErrSettlementInProgress):
+		// Distinct from already-settled: the money has not moved yet, the
+		// reactor is still working on it, and it may yet fail. Answering
+		// "already settled" here would be the same lie this process exists to
+		// remove.
+		return http.StatusConflict, ErrorResponse{ErrorCode: "settlement_in_progress", Message: err.Error()}
 	case errors.Is(err, eventstore.ErrAggregateNotFound):
 		return http.StatusNotFound, ErrorResponse{ErrorCode: "debt_not_found", Message: "debt not found"}
 	default:

@@ -13,8 +13,9 @@ type DomainEvent interface {
 type DebtStatus string
 
 const (
-	DebtStatusCreated DebtStatus = "created"
-	DebtStatusSettled DebtStatus = "settled"
+	DebtStatusCreated  DebtStatus = "created"
+	DebtStatusSettling DebtStatus = "settling"
+	DebtStatusSettled  DebtStatus = "settled"
 )
 
 type Aggregate struct {
@@ -80,17 +81,54 @@ func (a *Aggregate) Reason() string         { return a.reason }
 func (a *Aggregate) Status() DebtStatus     { return a.status }
 func (a *Aggregate) Changes() []DomainEvent { return a.changes }
 
-func (a *Aggregate) Settle(settledBy string, now time.Time) error {
+// RequestSettlement records that the owner wants to settle. It does not mark
+// the debt settled — the money has not moved yet. See ADR 0002.
+func (a *Aggregate) RequestSettlement(settledBy string, now time.Time) error {
 	if settledBy == "" {
 		return ErrMissingSettledBy
 	}
 	if a.status == DebtStatusSettled {
 		return ErrDebtAlreadySettled
 	}
+	if a.status == DebtStatusSettling {
+		return ErrSettlementInProgress
+	}
+	a.raise(DebtSettlementRequested{
+		DebtID:      a.id,
+		RequestedBy: settledBy,
+		RequestedAt: now,
+	})
+	return nil
+}
+
+// MarkSettled closes the settlement once the wallet movement has gone through.
+// This is the only place the debt becomes settled, and by the time it runs the
+// money has already moved.
+func (a *Aggregate) MarkSettled(settledBy string, now time.Time) error {
+	if a.status == DebtStatusSettled {
+		return ErrDebtAlreadySettled
+	}
+	if a.status != DebtStatusSettling {
+		return ErrSettlementNotRequested
+	}
 	a.raise(DebtSettled{
 		DebtID:    a.id,
 		SettledBy: settledBy,
 		SettledAt: now,
+	})
+	return nil
+}
+
+// FailSettlement records that the wallet refused the movement, so the debt
+// stands and can be settled again later.
+func (a *Aggregate) FailSettlement(reason string, now time.Time) error {
+	if a.status != DebtStatusSettling {
+		return ErrSettlementNotRequested
+	}
+	a.raise(DebtSettlementFailed{
+		DebtID:   a.id,
+		Reason:   reason,
+		FailedAt: now,
 	})
 	return nil
 }
@@ -112,8 +150,13 @@ func (a *Aggregate) Apply(event any) {
 		a.reason = e.Reason
 		a.status = DebtStatusCreated
 		a.createdAt = e.CreatedAt
+	case DebtSettlementRequested:
+		a.status = DebtStatusSettling
 	case DebtSettled:
 		a.status = DebtStatusSettled
+	case DebtSettlementFailed:
+		// The debt stands. It can be settled again.
+		a.status = DebtStatusCreated
 	}
 	a.version++
 }
