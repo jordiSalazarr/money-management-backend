@@ -60,9 +60,10 @@ backend/
         domain/                 # process aggregate + its events
         reactor.go              # the saga steps + compensation
         slices/                 # requesttransfer (202), gettransfer
-        projections/            # processes_view
       occurrence/               # one firing of a recurring movement
       debtsettlement/
+      projections/              # processes_view — ONE view for all three kinds,
+                                # because the sweeper queries one table
       sweeper/                  # re-drives processes that stall
       rejection/                # maps aggregate refusals to reason codes
 

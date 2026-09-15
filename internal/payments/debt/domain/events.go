@@ -7,6 +7,8 @@ const (
 	EventTypeDebtSettlementRequested = "DebtSettlementRequested"
 	EventTypeDebtSettled             = "DebtSettled"
 	EventTypeDebtSettlementFailed    = "DebtSettlementFailed"
+
+	EventTypeDebtSettlementRetryAttempted = "DebtSettlementRetryAttempted"
 )
 
 type DebtRecorded struct {
@@ -57,3 +59,17 @@ type DebtSettlementFailed struct {
 }
 
 func (e DebtSettlementFailed) EventType() string { return EventTypeDebtSettlementFailed }
+
+// DebtSettlementRetryAttempted records that the sweeper re-drove this
+// settlement. The count lives on the stream so it survives a sweeper restart —
+// without it the sweeper has no attempt budget to spend and would re-drive a
+// stuck settlement forever.
+type DebtSettlementRetryAttempted struct {
+	DebtID      string    `json:"debt_id"`
+	Attempt     int       `json:"attempt"`
+	AttemptedAt time.Time `json:"attempted_at"`
+}
+
+func (e DebtSettlementRetryAttempted) EventType() string {
+	return EventTypeDebtSettlementRetryAttempted
+}

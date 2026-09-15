@@ -5,8 +5,8 @@ import (
 	"net/http"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jordisalazar/money-management/internal/shared/middleware"
 	"github.com/jordisalazar/money-management/internal/payments/wallet/domain"
+	"github.com/jordisalazar/money-management/internal/shared/middleware"
 )
 
 type Handler struct {

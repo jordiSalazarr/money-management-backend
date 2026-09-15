@@ -9,6 +9,7 @@ import (
 	"github.com/jordisalazar/money-management/internal/payments/eventcatalog"
 	"github.com/jordisalazar/money-management/internal/payments/processes/transfer"
 	transferdomain "github.com/jordisalazar/money-management/internal/payments/processes/transfer/domain"
+	"github.com/jordisalazar/money-management/internal/payments/processes/transfer/slices/requesttransfer"
 	"github.com/jordisalazar/money-management/internal/payments/streams"
 	walletdomain "github.com/jordisalazar/money-management/internal/payments/wallet/domain"
 	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/addwallet"
@@ -59,7 +60,23 @@ func (f *fixture) disableWallet(t *testing.T, walletID string) {
 	}
 }
 
-// request opens a transfer the way the HTTP slice does, and returns its id.
+// requestViaHandler opens a transfer through the real command handler, so the
+// API precheck runs exactly as it would for an HTTP request.
+func (f *fixture) requestViaHandler(t *testing.T, from, to string, amount int, currency string) string {
+	t.Helper()
+	id, err := requesttransfer.NewCommandHandler(f.store, f.codec).Handle(context.Background(),
+		requesttransfer.Command{
+			UserID: "user-1", FromWalletID: from, ToWalletID: to,
+			Amount: amount, Currency: currency, Reason: "rent",
+		})
+	if err != nil {
+		t.Fatalf("requesting transfer: %v", err)
+	}
+	return id
+}
+
+// request opens a transfer by appending directly, bypassing the precheck. Used
+// only where a test needs a state the precheck would refuse to create.
 func (f *fixture) request(t *testing.T, from, to string, amount int, currency string) string {
 	t.Helper()
 	agg, err := transferdomain.Request("tx-1", "user-1", from, to, amount, currency, "rent", at)
@@ -180,20 +197,31 @@ func TestRejectedBeforeTheDebit(t *testing.T) {
 	}
 }
 
-// TestTheFiftyEuroScenario is the exact chain from ADR 0002 and §4.4 of the
-// migration plan, the one that used to lose the money outright:
+// TestTheFiftyEuroScenario is the chain from ADR 0002 and §4.4 of the
+// migration plan — the one that used to lose the money outright: the credit
+// leg is rejected, and the source wallet is disabled in between, so the
+// compensating deposit would have been rejected too, the record dropped with
+// a log.Warn, and the funds gone with no event recording it.
 //
-//	source is EUR, destination is USD, so the credit is rejected — and the user
-//	disables the source wallet in between, so the compensating deposit would
-//	have been rejected too, the record dropped with a log.Warn, and the funds
-//	gone with no event recording it.
+// It is driven through requesttransfer, the same entry point the HTTP handler
+// uses, rather than by appending TransferRequested directly. That matters:
+// the API precheck now rejects a statically-mismatched pair up front, so a
+// test that bypassed it would be proving the compensation path against a
+// transfer the real system would never have accepted.
 //
-// wallet.Refund is what makes this recoverable.
+// So the failure is arranged the way it actually happens in production — as a
+// race. Both wallets are EUR and healthy when the transfer is accepted; the
+// destination is disabled afterwards, in the window between the precheck and
+// the credit. No precheck can close that window, which is exactly why
+// compensation has to work.
 func TestTheFiftyEuroScenario(t *testing.T) {
 	f := newFixture(t)
 	from := f.newWallet(t, "EUR", 5000)
-	to := f.newWallet(t, "USD", 0)
-	id := f.request(t, from, to, 5000, "EUR")
+	to := f.newWallet(t, "EUR", 0)
+	id := f.requestViaHandler(t, from, to, 5000, "EUR")
+
+	// The window opens here: accepted, not yet debited.
+	f.disableWallet(t, to)
 
 	// Step 1: the debit goes through. The money is now out of the source.
 	f.drive(t)
@@ -204,11 +232,12 @@ func TestTheFiftyEuroScenario(t *testing.T) {
 		t.Fatalf("source balance = %d, want 0 — the debit should have happened", got)
 	}
 
-	// Step 2: the user disables the source wallet. Perfectly legal.
+	// Step 2: the source is disabled too, so the compensating deposit runs
+	// against a wallet that no longer accepts deposits. This is the step that
+	// used to drop the record and lose the money.
 	f.disableWallet(t, from)
 
-	// Step 3: the credit fails on the currency mismatch, and compensation runs
-	// against a wallet that no longer accepts deposits.
+	// Step 3: the credit is refused, and compensation has to work anyway.
 	f.driveUntilTerminal(t, id)
 
 	agg := f.transferState(t, id)

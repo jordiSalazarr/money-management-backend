@@ -21,6 +21,7 @@ import (
 	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/refundmoney"
 	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/withdrawmoney"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
+	"github.com/jordisalazar/money-management/internal/shared/middleware"
 )
 
 // Reactor drives the transfer saga.
@@ -57,7 +58,12 @@ func refundKey(id string) string { return id + ":refund" }
 
 // Handle routes one decoded event. Event types this process does not care
 // about are ignored — that is normal fan-out, not a fault.
-func (r *Reactor) Handle(ctx context.Context, event any, _ eventstore.EventMetadata) error {
+func (r *Reactor) Handle(ctx context.Context, event any, meta eventstore.EventMetadata) error {
+	// Carry the triggering event's correlation id onto everything this step
+	// writes, so one request can be followed across all the streams a process
+	// touches. CLAUDE.md requires it to flow command -> events -> projections;
+	// a saga is where that matters most and where it used to stop.
+	ctx = middleware.WithCorrelationID(ctx, meta.CorrelationID)
 	switch e := event.(type) {
 	case transfer.TransferRequested:
 		return r.debit(ctx, e.TransferID)
@@ -204,7 +210,7 @@ func (r *Reactor) load(ctx context.Context, transferID string) (*transfer.Aggreg
 
 func (r *Reactor) append(ctx context.Context, transferID string, expected int, agg *transfer.Aggregate) error {
 	err := eventstore.AppendChanges(ctx, r.store, r.codec, streams.Transfer(transferID),
-		expected, agg.Changes(), "", r.now())
+		expected, agg.Changes(), middleware.GetCorrelationID(ctx), r.now())
 	if err != nil {
 		return fmt.Errorf("recording progress on transfer %s: %w", transferID, err)
 	}
@@ -273,7 +279,10 @@ func (r *Reactor) GiveUp(ctx context.Context, transferID string) error {
 		err = agg.Fail(rejection.ReasonTimeout, r.now())
 	}
 	if err != nil {
-		return nil
+		if isAlreadyDone(err) {
+			return nil
+		}
+		return fmt.Errorf("giving up on transfer %s: %w", transferID, err)
 	}
 	return r.append(ctx, transferID, expected, agg)
 }
@@ -286,7 +295,7 @@ func (r *Reactor) RecordAttempt(ctx context.Context, transferID string) error {
 		return err
 	}
 	if err := agg.RecordAttempt(r.now()); err != nil {
-		return nil
+		return nil // already settled; nothing to count against
 	}
 	return r.append(ctx, transferID, expected, agg)
 }

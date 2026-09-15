@@ -2,6 +2,7 @@ package occurrence
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/depositmoney"
 	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/withdrawmoney"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
+	"github.com/jordisalazar/money-management/internal/shared/middleware"
 )
 
 type Reactor struct {
@@ -39,7 +41,12 @@ func NewReactor(store eventstore.Store, codec *eventstore.Codec, now func() time
 // produce the same key and the wallet applies the movement once.
 func movementKey(occurrenceID string) string { return "occurrence:" + occurrenceID }
 
-func (r *Reactor) Handle(ctx context.Context, event any, _ eventstore.EventMetadata) error {
+func (r *Reactor) Handle(ctx context.Context, event any, meta eventstore.EventMetadata) error {
+	// Carry the triggering event's correlation id onto everything this step
+	// writes, so one request can be followed across all the streams a process
+	// touches. CLAUDE.md requires it to flow command -> events -> projections;
+	// a saga is where that matters most and where it used to stop.
+	ctx = middleware.WithCorrelationID(ctx, meta.CorrelationID)
 	e, ok := event.(occurrence.MovementDue)
 	if !ok {
 		return nil
@@ -63,7 +70,10 @@ func (r *Reactor) fire(ctx context.Context, recurringMovementID string, forDate 
 	switch {
 	case cmdErr == nil, rejection.IsAlreadyProcessed(cmdErr):
 		if err := agg.Execute(r.now()); err != nil {
-			return nil
+			if errors.Is(err, occurrence.ErrAlreadyTerminal) {
+				return nil // a concurrent delivery got there first
+			}
+			return fmt.Errorf("recording occurrence %s: %w", stream, err)
 		}
 	default:
 		code, permanent := rejection.Classify(cmdErr)
@@ -73,11 +83,14 @@ func (r *Reactor) fire(ctx context.Context, recurringMovementID string, forDate 
 		// The wallet refused. Record the skip — this is a reportable outcome a
 		// person is entitled to see, not an error to swallow.
 		if err := agg.Skip(code, r.now()); err != nil {
-			return nil
+			if errors.Is(err, occurrence.ErrAlreadyTerminal) {
+				return nil
+			}
+			return fmt.Errorf("recording skipped occurrence %s: %w", stream, err)
 		}
 	}
 
-	return r.appendTo(ctx, stream.ID, expected, agg)
+	return r.append(ctx, stream.ID, expected, agg)
 }
 
 func (r *Reactor) move(ctx context.Context, agg *occurrence.Aggregate) error {
@@ -130,9 +143,12 @@ func (r *Reactor) GiveUp(ctx context.Context, occurrenceID string) error {
 		return nil
 	}
 	if err := agg.Skip(rejection.ReasonTimeout, r.now()); err != nil {
-		return nil
+		if errors.Is(err, occurrence.ErrAlreadyTerminal) {
+			return nil
+		}
+		return fmt.Errorf("giving up on occurrence %s: %w", occurrenceID, err)
 	}
-	return r.appendTo(ctx, occurrenceID, expected, agg)
+	return r.append(ctx, occurrenceID, expected, agg)
 }
 
 func (r *Reactor) RecordAttempt(ctx context.Context, occurrenceID string) error {
@@ -141,9 +157,9 @@ func (r *Reactor) RecordAttempt(ctx context.Context, occurrenceID string) error 
 		return err
 	}
 	if err := agg.RecordAttempt(r.now()); err != nil {
-		return nil
+		return nil // already settled; nothing to count against
 	}
-	return r.appendTo(ctx, occurrenceID, expected, agg)
+	return r.append(ctx, occurrenceID, expected, agg)
 }
 
 func (r *Reactor) load(ctx context.Context, occurrenceID string) (*occurrence.Aggregate, int, error) {
@@ -158,9 +174,9 @@ func (r *Reactor) load(ctx context.Context, occurrenceID string) (*occurrence.Ag
 	return agg, expected, nil
 }
 
-func (r *Reactor) appendTo(ctx context.Context, occurrenceID string, expected int, agg *occurrence.Aggregate) error {
+func (r *Reactor) append(ctx context.Context, occurrenceID string, expected int, agg *occurrence.Aggregate) error {
 	err := eventstore.AppendChanges(ctx, r.store, r.codec, streams.OccurrenceByID(occurrenceID),
-		expected, agg.Changes(), "", r.now())
+		expected, agg.Changes(), middleware.GetCorrelationID(ctx), r.now())
 	if err != nil {
 		return fmt.Errorf("recording occurrence %s: %w", occurrenceID, err)
 	}

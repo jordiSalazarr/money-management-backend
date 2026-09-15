@@ -269,7 +269,11 @@ reactor:
                  fail → append TransferStuck   → transfer-<txID>, Nack(Park)
 ```
 
-The balance precheck at the API boundary is **advisory only**. It checks balance, so it does not catch a currency mismatch between the two wallets; the authoritative check happens inside `wallet.Withdraw` when the reactor runs it. A transfer can be accepted with 202 and still fail, and `TransferFailed` carries the reason.
+The precheck at the API boundary is **advisory only**, but it is not balance-only. It checks balance, currency and whether either wallet is disabled, so the statically-doomed cases fail fast with a 4xx instead of being accepted and then failing asynchronously.
+
+It remains advisory because it cannot be anything else: everything it checks can change between the precheck and the reactor running. A transfer can still be accepted with 202 and fail, and `TransferFailed` carries the reason. The authoritative check is always the one inside `wallet.Withdraw` and `wallet.Deposit`.
+
+**Revised during implementation.** This section originally specified a balance-only precheck, which would have let a EUR→USD transfer be accepted and debited before failing on the credit leg. Rejecting it up front is strictly better, and does not weaken the case for compensation — see §4.4.
 
 ### 4.4 Failure taxonomy
 
@@ -286,14 +290,16 @@ The balance precheck at the API boundary is **advisory only**. It checks balance
 
 | | | |
 |---|---|---|
-| `t0` | Wallet A is EUR, Wallet B is USD. `POST /transfers` €50 A→B | Balance precheck passes — it does not check currency. `TransferRequested`. 202. |
+| `t0` | Both wallets are EUR and healthy. `POST /transfers` €50 A→B | Precheck passes — everything it checks is fine *right now*. `TransferRequested`. 202. |
 | `t1` | reactor debits A, idem `X:debit` | `MoneyWithdrawn` on `wallet-A`. **A is −€50.** `TransferDebited`. |
-| `t2` | user disables Wallet A | `WalletDisabled`. Perfectly legal. |
-| `t3` | reactor credits B, idem `X:credit` | `Deposit` → `ErrCurrencyMismatch` (`wallet/domain/aggregate.go:124`). Compensate. |
+| `t2` | user disables **both** wallets | `WalletDisabled` ×2. Perfectly legal. |
+| `t3` | reactor credits B, idem `X:credit` | `Deposit` → **`ErrWalletDisabled`**. Compensate. |
 | `t4` | reactor refunds A, idem `X:refund` | `Deposit` → **`ErrWalletDisabled`** (`:118`). |
 | `t5` | `isPermanent(ErrWalletDisabled)` → `true` | `router.go:148` — `log.Warn`, drop the record. |
 
 **€50 gone.** The transfer reads `Debited` forever, no terminal event is ever written, and the only trace is one `Warn` line. The compensating action was subject to the same invariants as a normal deposit, and one of those invariants is under the user's control.
+
+Note the failure is arranged as a **race**, not a static mismatch, precisely because §4.3's precheck now rejects the static case up front. No precheck can close this window — the state it validated is free to change while the reactor works — which is the whole reason compensation has to be correct rather than merely unlikely to be needed. `TestTheFiftyEuroScenario` drives it through `requesttransfer`, the same entry point the HTTP handler uses, so it proves the path against a transfer the real system would actually accept.
 
 The domain resolution: *the disabled-wallet check on `Deposit` exists to stop **new** money entering a closed pot. Returning money you already took out of that same pot is not new money.* So `Refund` keeps the idempotency, positive-amount and currency checks and drops the disabled and category checks:
 
@@ -446,10 +452,8 @@ to §8. "→" means the file moves; **DELETE** means it stops existing.
 | `shared/eventstore/codec.go` | **NEW.** Type registry keyed by `(eventType, version)` + `Decode(Recorded)` / `DecodeAll([]Event)`. Hard-errors on a type unknown to the codec. Stamps `schema_version` into metadata on append. | 1 |
 | `shared/eventstore/upcast.go` | **NEW.** `Upcaster` interface, the generic `Typed[From,To]` adapter, and the chain runner that treats a missing step as identity. | 1 |
 | `shared/eventstore/codec_test.go` | **NEW.** Chain-with-gaps, unknown-type error, known-but-unhandled skip. | 1 |
-| `payments/wallet/schema/` | **NEW package.** `sample()` per event type, `testdata/*.vN.json`, `TestSchemaFrozen`. **Zero upcasters on day 1.** | 1 |
-| `payments/debt/schema/` | **NEW package.** Same. | 1 |
-| `payments/recurringmovement/schema/` | **NEW package.** Same. | 1 |
-| `payments/processes/*/schema/` | **NEW packages.** Same, for the process event types. | 1 |
+| `payments/eventcatalog/` | **NEW package.** One `Entry` per event type — current version, factory, and a fully-populated sample — plus `testdata/<Type>.v<N>.json` and the frozen-shape tripwire. **Zero upcasters on day 1.** | 1 |
+| `payments/<context>/schema/` | **Deferred until the first upcaster exists.** Originally specified as four packages created up front; with zero upcasters they would have been empty, and the per-context split costs the "single canonical list" property that §3.3 depends on. Frozen historical structs still belong here when there are any. | — |
 | *(the seven decode switches)* | **DELETE.** Enumerated with line numbers in §3.3. | 1 |
 
 ### 7.2 Event store port (§5)
@@ -576,7 +580,17 @@ By far the longest phase, and deliberately so: every decision from §3 and §4 i
 6. **The sweeper logic**, unit-tested against the memory store by advancing a clock.
 7. **`processes_view`**, and the double-movement regression test from §4.8.
 
-**Done when**: `go test ./...` is green, `make run` boots in memory mode, a transfer completes end-to-end through the in-process feed, a transfer into a currency-mismatched wallet lands on `TransferFailed` with the source wallet whole, and a recurring withdrawal against an insufficient balance produces `MovementSkipped` rather than a silent no-op.
+**Done when**: `go test ./...` is green, `make run` boots in memory mode, a transfer completes end-to-end through the in-process feed, a transfer whose credit leg is refused lands on `TransferFailed` with the source wallet whole, and a recurring withdrawal against an insufficient balance produces `MovementSkipped` rather than a silent no-op.
+
+#### What landed early, and why
+
+Three items tabled for later phases came forward, because the port split left them with no working form:
+
+- **The Kinesis decoders** (`internal/projector/kinesisdecode`, the `HandleBatch` entry points, `reactor/router.go`'s `classify`) existed only to translate DynamoDB-Streams records. Once `Store`/`Feed` replaced the old interface they had no input format, so they are gone rather than maintained as a bridge to something being deleted. The permanent-vs-transient *classification* they carried was right and survives — it moved into `processes/rejection`, where each process records a terminal outcome instead of dropping the record.
+- **`devdriver.go`** polled the DynamoDB table on a ticker and wrapped rows in synthetic Kinesis records. With a real global log behind `Feed` that fake is unnecessary; `app/async.go` subscribes for real, so local and deployed topology now match.
+- **`009_create_processes_view.sql` and the shared contract table** came with the code that needs them. `008_create_projection_checkpoints.sql` did **not** — checkpoints are still phase 3, and until then every subscription starts from the beginning of the log, which is correct but not fast.
+
+`cmd/projector` and `cmd/reactor` are now the long-running subscribers phase 3 specifies. They refuse to start against a store with no global log, which today means they refuse to start at all — DynamoDB has no `$all`. They come alive with the KurrentDB adapter. `make dev-stack` is parked for the same reason; `make run` is the full local stack in the meantime.
 
 ### Phase 2 — KurrentDB adapter
 

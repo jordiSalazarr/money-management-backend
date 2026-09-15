@@ -8,7 +8,7 @@ type Command struct {
 	Reason   string
 	Category string
 	// IdempotencyKey is left empty for HTTP-initiated deposits and set to
-	// the source Kinesis event_id by the reactor. The wallet aggregate
+	// a process-derived key (e.g. "<txID>:credit") by the reactor. The wallet aggregate
 	// short-circuits with wallet.ErrAlreadyProcessed on a duplicate key.
 	IdempotencyKey string
 }

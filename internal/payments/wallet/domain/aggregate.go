@@ -24,7 +24,9 @@ const (
 	MinInitialAmount = 0
 )
 
-// TODO: this should be shared
+// DomainEvent is declared per domain package on purpose rather than imported
+// from the event store: domain code depends on no infrastructure. Go's
+// structural typing means these values satisfy eventstore.DomainEvent anyway.
 type DomainEvent interface {
 	EventType() string
 }
@@ -110,7 +112,7 @@ func (a *Aggregate) Disable(userID, reason string, now time.Time) error {
 
 // Deposit appends a MoneyDeposited event after validating invariants.
 // idempotencyKey is empty for HTTP-initiated deposits; the reactor passes
-// the source Kinesis event_id so retries no-op with ErrAlreadyProcessed.
+// a process-derived key so retries no-op with ErrAlreadyProcessed.
 func (a *Aggregate) Deposit(userID string, amount int, currency, reason, category, idempotencyKey string, now time.Time) error {
 	if idempotencyKey != "" && a.idempotencyKeys[idempotencyKey] {
 		return ErrAlreadyProcessed

@@ -10,6 +10,7 @@ package debtsettlement
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
@@ -19,6 +20,7 @@ import (
 	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/depositmoney"
 	"github.com/jordisalazar/money-management/internal/payments/wallet/slices/withdrawmoney"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
+	"github.com/jordisalazar/money-management/internal/shared/middleware"
 )
 
 type Reactor struct {
@@ -46,7 +48,12 @@ func NewReactor(store eventstore.Store, codec *eventstore.Codec, now func() time
 // stays stable if the debt stream is ever rebuilt.
 func settlementKey(debtID string) string { return "debt:" + debtID + ":settle" }
 
-func (r *Reactor) Handle(ctx context.Context, event any, _ eventstore.EventMetadata) error {
+func (r *Reactor) Handle(ctx context.Context, event any, meta eventstore.EventMetadata) error {
+	// Carry the triggering event's correlation id onto everything this step
+	// writes, so one request can be followed across all the streams a process
+	// touches. CLAUDE.md requires it to flow command -> events -> projections;
+	// a saga is where that matters most and where it used to stop.
+	ctx = middleware.WithCorrelationID(ctx, meta.CorrelationID)
 	e, ok := event.(debt.DebtSettlementRequested)
 	if !ok {
 		return nil
@@ -69,7 +76,12 @@ func (r *Reactor) settle(ctx context.Context, debtID, requestedBy string) error 
 	switch {
 	case cmdErr == nil, rejection.IsAlreadyProcessed(cmdErr):
 		if err := agg.MarkSettled(requestedBy, r.now()); err != nil {
-			return nil // a concurrent delivery got there first
+			// A concurrent delivery got there first — the effect we wanted is
+			// already in place, so this is a success, not a fault.
+			if errors.Is(err, debt.ErrDebtAlreadySettled) || errors.Is(err, debt.ErrSettlementNotRequested) {
+				return nil
+			}
+			return fmt.Errorf("settling debt %s: %w", debtID, err)
 		}
 	default:
 		code, permanent := rejection.Classify(cmdErr)
@@ -81,11 +93,15 @@ func (r *Reactor) settle(ctx context.Context, debtID, requestedBy string) error 
 		// The wallet refused on a rule. Record it — this is the whole point.
 		// The debt goes back to standing and can be settled again later.
 		if err := agg.FailSettlement(code, r.now()); err != nil {
-			return nil
+			// A concurrent delivery already settled this. Nothing to do.
+			if errors.Is(err, debt.ErrSettlementNotRequested) {
+				return nil
+			}
+			return fmt.Errorf("recording failed settlement of debt %s: %w", debtID, err)
 		}
 	}
 
-	return r.appendTo(ctx, debtID, expected, agg)
+	return r.append(ctx, debtID, expected, agg)
 }
 
 // move applies the debt to the wallet. Direction "IN" means the money is owed
@@ -143,16 +159,28 @@ func (r *Reactor) GiveUp(ctx context.Context, debtID string) error {
 		return nil
 	}
 	if err := agg.FailSettlement(rejection.ReasonTimeout, r.now()); err != nil {
-		return nil
+		if errors.Is(err, debt.ErrSettlementNotRequested) {
+			return nil
+		}
+		return fmt.Errorf("giving up on debt %s: %w", debtID, err)
 	}
-	return r.appendTo(ctx, debtID, expected, agg)
+	return r.append(ctx, debtID, expected, agg)
 }
 
-func (r *Reactor) RecordAttempt(_ context.Context, _ string) error {
-	// The debt aggregate carries no attempt counter: a settlement has a single
-	// step, so the sweeper's own attempt budget is enough and there is nothing
-	// partial to remember between tries.
-	return nil
+// RecordAttempt notes a sweeper re-drive on the debt's own stream.
+//
+// It has to be real. The sweeper spends its attempt budget by reading the
+// count back off the process, so a no-op here would leave the budget at zero
+// forever and the settlement would be re-driven on every single sweep.
+func (r *Reactor) RecordAttempt(ctx context.Context, debtID string) error {
+	agg, expected, err := r.load(ctx, debtID)
+	if err != nil {
+		return err
+	}
+	if err := agg.RecordSettlementAttempt(r.now()); err != nil {
+		return nil // nothing in flight to count against
+	}
+	return r.append(ctx, debtID, expected, agg)
 }
 
 func (r *Reactor) load(ctx context.Context, debtID string) (*debt.Aggregate, int, error) {
@@ -167,9 +195,9 @@ func (r *Reactor) load(ctx context.Context, debtID string) (*debt.Aggregate, int
 	return agg, expected, nil
 }
 
-func (r *Reactor) appendTo(ctx context.Context, debtID string, expected int, agg *debt.Aggregate) error {
+func (r *Reactor) append(ctx context.Context, debtID string, expected int, agg *debt.Aggregate) error {
 	err := eventstore.AppendChanges(ctx, r.store, r.codec, streams.Debt(debtID),
-		expected, agg.Changes(), "", r.now())
+		expected, agg.Changes(), middleware.GetCorrelationID(ctx), r.now())
 	if err != nil {
 		return fmt.Errorf("recording settlement of debt %s: %w", debtID, err)
 	}

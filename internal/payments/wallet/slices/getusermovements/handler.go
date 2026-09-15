@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/gin-gonic/gin"
-	"github.com/jordisalazar/money-management/internal/shared/middleware"
 	"github.com/jordisalazar/money-management/internal/payments/wallet/projections"
+	"github.com/jordisalazar/money-management/internal/shared/middleware"
 )
 
 // UserMovementView is the enriched read model for a movement across all user wallets.

@@ -17,6 +17,8 @@ import (
 	"log/slog"
 	"time"
 
+	"github.com/jordisalazar/money-management/internal/payments/debt/domain"
+	"github.com/jordisalazar/money-management/internal/payments/processes/occurrence/domain"
 	"github.com/jordisalazar/money-management/internal/payments/processes/transfer/domain"
 	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 )
@@ -47,14 +49,34 @@ type ProcessView struct {
 	SettledAt    *time.Time `json:"settled_at,omitempty"`
 }
 
+// terminalStatuses is every status meaning "this process is over", across all
+// three kinds.
+//
+// It has to cover all of them, not just transfers: the sweeper decides what to
+// re-drive from this, so a kind whose terminal statuses are missing here would
+// be re-driven forever after it had already settled.
+var terminalStatuses = map[string]bool{
+	transfer.StatusCompleted:  true,
+	transfer.StatusFailed:     true,
+	transfer.StatusStuck:      true,
+	occurrence.StatusExecuted: true,
+	occurrence.StatusSkipped:  true,
+	statusSettled:             true,
+	statusSettlementFailed:    true,
+}
+
+// Debt settlement statuses. The debt aggregate's own DebtStatus values describe
+// the debt; these describe the settlement process running against it.
+const (
+	statusSettling         = "settling"
+	statusSettled          = "settled"
+	statusSettlementFailed = "settlement_failed"
+)
+
 // InFlight reports whether this process has not yet reached its one outcome.
 // The sweeper looks for exactly these.
 func (v ProcessView) InFlight() bool {
-	switch v.Status {
-	case transfer.StatusCompleted, transfer.StatusFailed, transfer.StatusStuck:
-		return false
-	}
-	return v.Status != ""
+	return v.Status != "" && !terminalStatuses[v.Status]
 }
 
 type ProcessStore interface {
@@ -126,7 +148,94 @@ func (p *ProcessesProjector) Handle(event any, _ eventstore.EventMetadata) {
 		p.patch(ctx, KindTransfer, e.TransferID, func(v *ProcessView) {
 			v.Attempts = e.Attempt
 		})
+
+	// --- occurrence ---
+
+	case occurrence.MovementDue:
+		p.upsert(ctx, &ProcessView{
+			Kind:         KindOccurrence,
+			ID:           e.OccurrenceID,
+			UserID:       e.UserID,
+			Status:       occurrence.StatusDue,
+			Amount:       e.Amount,
+			Currency:     e.Currency,
+			FromWalletID: e.WalletID,
+			RequestedAt:  e.DueAt,
+		})
+
+	case occurrence.MovementExecuted:
+		settled := e.ExecutedAt
+		p.patch(ctx, KindOccurrence, e.OccurrenceID, func(v *ProcessView) {
+			v.Status = occurrence.StatusExecuted
+			v.SettledAt = &settled
+		})
+
+	case occurrence.MovementSkipped:
+		settled := e.SkippedAt
+		p.patch(ctx, KindOccurrence, e.OccurrenceID, func(v *ProcessView) {
+			v.Status = occurrence.StatusSkipped
+			v.Reason = e.Reason
+			v.SettledAt = &settled
+		})
+
+	case occurrence.MovementRetryAttempted:
+		p.patch(ctx, KindOccurrence, e.OccurrenceID, func(v *ProcessView) {
+			v.Attempts = e.Attempt
+		})
+
+	// --- debt settlement ---
+	//
+	// Keyed by debt id, so a debt settled again after a failed attempt
+	// overwrites its own row. That is right: the row describes the current
+	// attempt, and re-opening one clears the previous outcome.
+
+	case debt.DebtSettlementRequested:
+		p.reopen(ctx, KindDebtSettlement, e.DebtID, e.RequestedBy, e.RequestedAt)
+
+	case debt.DebtSettled:
+		settled := e.SettledAt
+		p.patch(ctx, KindDebtSettlement, e.DebtID, func(v *ProcessView) {
+			v.Status = statusSettled
+			v.SettledAt = &settled
+		})
+
+	case debt.DebtSettlementFailed:
+		settled := e.FailedAt
+		p.patch(ctx, KindDebtSettlement, e.DebtID, func(v *ProcessView) {
+			v.Status = statusSettlementFailed
+			v.Reason = e.Reason
+			v.SettledAt = &settled
+		})
+
+	case debt.DebtSettlementRetryAttempted:
+		p.patch(ctx, KindDebtSettlement, e.DebtID, func(v *ProcessView) {
+			v.Attempts = e.Attempt
+		})
 	}
+}
+
+// reopen starts a fresh attempt on a process whose row may already exist from
+// an earlier, failed one. The previous outcome is cleared, or the row would
+// still read as settled and the sweeper would never look at it again.
+func (p *ProcessesProjector) reopen(ctx context.Context, kind, id, userID string, at time.Time) {
+	existing, err := p.store.Get(ctx, kind, id)
+	if err != nil {
+		slog.Error("processes projector: read failed", "kind", kind, "id", id, "error", err)
+		return
+	}
+
+	view := &ProcessView{Kind: kind, ID: id, UserID: userID, RequestedAt: at}
+	if existing != nil {
+		view.Amount = existing.Amount
+		view.Currency = existing.Currency
+		view.FromWalletID = existing.FromWalletID
+	}
+	view.Status = statusSettling
+	view.Reason = ""
+	view.SettledAt = nil
+	view.Attempts = 0
+
+	p.upsert(ctx, view)
 }
 
 func (p *ProcessesProjector) upsert(ctx context.Context, view *ProcessView) {

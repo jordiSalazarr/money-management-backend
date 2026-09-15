@@ -83,6 +83,9 @@ func Entries() []Entry {
 			DebtID: "33333333-3333-3333-3333-333333333333",
 			Reason: "insufficient_funds", FailedAt: sampleTime,
 		}},
+		{Version: 1, Factory: func() any { return &debt.DebtSettlementRetryAttempted{} }, Sample: debt.DebtSettlementRetryAttempted{
+			DebtID: "33333333-3333-3333-3333-333333333333", Attempt: 2, AttemptedAt: sampleTime,
+		}},
 		{Version: 1, Factory: func() any { return &debt.DebtSettled{} }, Sample: debt.DebtSettled{
 			DebtID:    "33333333-3333-3333-3333-333333333333",
 			SettledBy: "22222222-2222-2222-2222-222222222222", SettledAt: sampleTime,

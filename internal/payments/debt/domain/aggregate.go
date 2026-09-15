@@ -27,6 +27,7 @@ type Aggregate struct {
 	direction string
 	reason    string
 	status    DebtStatus
+	attempts  int
 	createdAt time.Time
 	version   int
 	changes   []DomainEvent
@@ -79,6 +80,7 @@ func (a *Aggregate) Currency() string       { return a.currency }
 func (a *Aggregate) Direction() string      { return a.direction }
 func (a *Aggregate) Reason() string         { return a.reason }
 func (a *Aggregate) Status() DebtStatus     { return a.status }
+func (a *Aggregate) Attempts() int          { return a.attempts }
 func (a *Aggregate) Changes() []DomainEvent { return a.changes }
 
 // RequestSettlement records that the owner wants to settle. It does not mark
@@ -133,6 +135,19 @@ func (a *Aggregate) FailSettlement(reason string, now time.Time) error {
 	return nil
 }
 
+// RecordSettlementAttempt notes a sweeper re-drive of the settlement in flight.
+func (a *Aggregate) RecordSettlementAttempt(now time.Time) error {
+	if a.status != DebtStatusSettling {
+		return ErrSettlementNotRequested
+	}
+	a.raise(DebtSettlementRetryAttempted{
+		DebtID:      a.id,
+		Attempt:     a.attempts + 1,
+		AttemptedAt: now,
+	})
+	return nil
+}
+
 func (a *Aggregate) raise(event DomainEvent) {
 	a.Apply(event)
 	a.changes = append(a.changes, event)
@@ -152,6 +167,10 @@ func (a *Aggregate) Apply(event any) {
 		a.createdAt = e.CreatedAt
 	case DebtSettlementRequested:
 		a.status = DebtStatusSettling
+		// A fresh attempt starts its budget over.
+		a.attempts = 0
+	case DebtSettlementRetryAttempted:
+		a.attempts = e.Attempt
 	case DebtSettled:
 		a.status = DebtStatusSettled
 	case DebtSettlementFailed:

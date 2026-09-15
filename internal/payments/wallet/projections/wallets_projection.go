@@ -5,8 +5,8 @@ import (
 	"log/slog"
 	"time"
 
-	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 	"github.com/jordisalazar/money-management/internal/payments/wallet/domain"
+	"github.com/jordisalazar/money-management/internal/shared/eventstore"
 )
 
 // WalletView is the read model for a wallet.

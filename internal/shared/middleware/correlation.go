@@ -29,3 +29,17 @@ func GetCorrelationID(ctx context.Context) string {
 	}
 	return ""
 }
+
+// WithCorrelationID puts a correlation id on a context that did not come from
+// an HTTP request.
+//
+// Reactors need this: they run under a subscription, not a request, so the
+// only correlation id available is the one on the event that triggered them.
+// Carrying it forward is what keeps a single user action traceable across
+// every stream a process touches.
+func WithCorrelationID(ctx context.Context, id string) context.Context {
+	if id == "" {
+		return ctx
+	}
+	return context.WithValue(ctx, correlationIDKey, id)
+}

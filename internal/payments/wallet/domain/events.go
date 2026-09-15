@@ -31,8 +31,8 @@ type MoneyDeposited struct {
 	Reason      string    `json:"reason"`
 	Category    string    `json:"category"`
 	DepositedAt time.Time `json:"deposited_at"`
-	// IdempotencyKey is empty for HTTP-initiated deposits and carries the
-	// source Kinesis event_id for reactor-initiated deposits. When non-empty
+	// IdempotencyKey is empty for HTTP-initiated deposits and carries a
+	// process-derived key (e.g. "<txID>:credit") for reactor-initiated deposits. When non-empty
 	// it lets the aggregate short-circuit on retries with ErrAlreadyProcessed.
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
@@ -47,8 +47,8 @@ type MoneyWithdrawn struct {
 	Reason      string    `json:"reason"`
 	Category    string    `json:"category"`
 	WithdrawnAt time.Time `json:"withdrawn_at"`
-	// IdempotencyKey is empty for HTTP-initiated withdrawals and carries
-	// the source Kinesis event_id for reactor-initiated withdrawals.
+	// IdempotencyKey is empty for HTTP-initiated withdrawals and carries a
+	// process-derived key (e.g. "<txID>:debit") for reactor-initiated withdrawals.
 	IdempotencyKey string `json:"idempotency_key,omitempty"`
 }
 

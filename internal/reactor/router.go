@@ -26,14 +26,13 @@ type Handler interface {
 type Router struct {
 	codec    *eventstore.Codec
 	handlers []Handler
-	log      *slog.Logger
 }
 
-func NewRouter(codec *eventstore.Codec, log *slog.Logger, handlers ...Handler) *Router {
-	if log == nil {
-		log = slog.Default()
-	}
-	return &Router{codec: codec, handlers: handlers, log: log}
+// NewRouter takes a logger for call-site symmetry with the projector, but does
+// not keep one. Every outcome here is either a dispatch or a returned error;
+// a log-and-continue path is exactly what this rewrite removed.
+func NewRouter(codec *eventstore.Codec, _ *slog.Logger, handlers ...Handler) *Router {
+	return &Router{codec: codec, handlers: handlers}
 }
 
 // Handle decodes one recorded event and offers it to every process. Processes

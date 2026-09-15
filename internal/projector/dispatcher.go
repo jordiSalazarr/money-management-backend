@@ -19,14 +19,13 @@ import (
 type Dispatcher struct {
 	codec       *eventstore.Codec
 	subscribers []eventstore.Subscriber
-	log         *slog.Logger
 }
 
-func NewDispatcher(codec *eventstore.Codec, log *slog.Logger) *Dispatcher {
-	if log == nil {
-		log = slog.Default()
-	}
-	return &Dispatcher{codec: codec, log: log}
+// NewDispatcher takes a logger for call-site symmetry with the reactor, but
+// does not keep one: everything here either fans out or returns an error, and
+// there is deliberately no third path where something is logged and dropped.
+func NewDispatcher(codec *eventstore.Codec, _ *slog.Logger) *Dispatcher {
+	return &Dispatcher{codec: codec}
 }
 
 func (d *Dispatcher) Subscribe(s eventstore.Subscriber) {
