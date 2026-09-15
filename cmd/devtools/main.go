@@ -57,6 +57,14 @@ func main() {
 		if err := runMigrate(); err != nil {
 			log.Fatalf("migrate: %v", err)
 		}
+	case "replay":
+		if len(os.Args) < 3 {
+			fmt.Fprintf(os.Stderr, "replay needs a projection name\n\nknown projections:\n%s\n", knownProjections())
+			os.Exit(2)
+		}
+		if err := runReplay(context.Background(), os.Args[2]); err != nil {
+			log.Fatalf("replay: %v", err)
+		}
 	default:
 		usage()
 		os.Exit(2)
@@ -64,7 +72,15 @@ func main() {
 }
 
 func usage() {
-	fmt.Fprintln(os.Stderr, "usage: devtools <reset|seed|migrate>")
+	fmt.Fprintln(os.Stderr, `usage: devtools <command>
+
+  migrate            apply any unapplied migrations
+  seed               post a little data through the API
+  reset              empty every projection and clear every checkpoint, so
+                     they all rebuild from the log on the next boot
+  replay <name>      rebuild ONE projection: empty its table, clear its
+                     checkpoint, leave the others alone`)
+	fmt.Fprintf(os.Stderr, "\nprojections:\n%s\n", knownProjections())
 }
 
 // runMigrate applies any unapplied migrations. Idempotent — sql-migrate

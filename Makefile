@@ -1,4 +1,4 @@
-.PHONY: help test test-kurrent kurrentdb-up kurrentdb-down dev-kurrent dev-stack build run postgres-up postgres-down dev-migrate dev-reset dev-nuke dev-seed
+.PHONY: help test test-kurrent replay kurrentdb-up kurrentdb-down dev-kurrent dev-stack build run postgres-up postgres-down dev-migrate dev-reset dev-nuke dev-seed
 
 KURRENTDB_URL       ?= kurrentdb://localhost:2113?tls=false
 KURRENTDB_HTTP      ?= http://localhost:2113
@@ -68,6 +68,10 @@ dev-reset: postgres-up ## Wipe the projection tables, then re-run migrations
 # Wiping only the projections leaves them empty with their checkpoints intact,
 # so nothing replays and the read models stay blank — worse than not resetting
 # at all. KurrentDB has no "delete everything", so the volume goes.
+replay: ## Rebuild ONE projection (make replay P=movements_projector)
+	@test -n "$(P)" || { echo "usage: make replay P=<projection>"; AURORA_URL=$(AURORA_URL) go run ./cmd/devtools replay 2>&1 | tail -8; exit 2; }
+	AURORA_URL=$(AURORA_URL) go run ./cmd/devtools replay $(P)
+
 dev-nuke: ## Wipe BOTH the event store and the projections, then re-migrate
 	docker compose rm -sf kurrentdb
 	docker volume rm -f $$(docker compose config --volumes | grep kurrent | sed "s|^|$$(basename $(CURDIR))_|") 2>/dev/null || true

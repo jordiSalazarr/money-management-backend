@@ -678,7 +678,7 @@ Decisions inside this phase:
 
 Note: the `voice` slice depends on Bedrock and Transcribe. It already falls back to the direct Anthropic API when `ANTHROPIC_API_KEY` is set, so it survives teardown in local-dev mode — but Transcribe streaming has no such fallback and will stop working. Decide then whether to drop the audio endpoint or keep an AWS credential around just for it.
 
-### Phase 5 — Auth and frontend
+### Phase 5 — Auth and frontend — **DONE**
 
 Phases 1–4 run on the existing `X-Dev-User` header; the SPA's transfer page stays feature-flagged off. Then:
 
@@ -686,9 +686,18 @@ Phases 1–4 run on the existing `X-Dev-User` header; the SPA's transfer page st
 - Pick the provider — Cognito (keeps existing users, requires outbound internet) or Keycloak in-cluster (self-contained, more k8s learning, needs an Amplify → `oidc-client-ts` swap).
 - Rebuild the transfer UI against the 202 + poll flow, and surface `MovementSkipped` and `TransferStuck` — the failure states are the point, and a UI that can only render success would hide exactly what §4 exists to make visible.
 
-### Phase 6 — Operations (optional, pick by appetite)
+### Phase 6 — Operations — **partially done, deliberately**
 
-Prometheus + Grafana with per-subscription projection-lag metrics · ArgoCD for GitOps · CloudNativePG operator replacing the hand-rolled Postgres StatefulSet · NetworkPolicies, resource limits, PodDisruptionBudgets · replay tooling (`devtools replay <projection>` = truncate one projection, delete one checkpoint row, restart — which §6's independent checkpoints make a per-projection operation, and which is far cleaner than anything possible on Kinesis).
+Two taken, because they have clear value and could actually be verified here:
+
+- **Per-projection lag metrics.** The projector serves `/metrics` (Prometheus text) and `/health/live` on `:9090`. Lag is head minus checkpoint, labelled by subscription. It is the only honest signal a projector can give: "the process is alive" says nothing, because a projector can be alive, healthy, and twenty minutes behind, serving a read model that quietly disagrees with the log. **Lag is deliberately not a liveness condition** — restarting a projector that is behind only makes it further behind, and a restart loop would stop it ever catching up.
+- **`devtools replay <projection>`.** Empty one view, clear one checkpoint, in one transaction; the other four keep serving. This is the operation [ADR 0003](./adr/0003-independent-projection-subscriptions.md) chose independent checkpoints *for*. The transaction is not optional: truncating without clearing the checkpoint leaves an empty table the projector believes is current, so it sits there caught up and serving nothing, with no error anywhere saying so — strictly worse than not replaying at all.
+
+Three left, and the reason is the same for all of them: they cannot be verified on a laptop, and manifests that have never run are a liability rather than an asset — see what actually running the chart turned up below.
+
+- **ArgoCD for GitOps.** Wants a real cluster and a repo it can watch.
+- **CloudNativePG** replacing the hand-rolled Postgres StatefulSet. The hand-rolled one is most of the point of the exercise; swapping it for an operator would hide exactly the parts worth understanding.
+- **NetworkPolicies, PodDisruptionBudgets.** Meaningless on a single-node cluster with no CNI enforcing policy. Resource limits *are* set.
 
 ---
 

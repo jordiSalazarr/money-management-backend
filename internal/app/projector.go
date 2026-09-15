@@ -30,6 +30,11 @@ type ProjectorOptions struct {
 // ProjectorBundle is every projection, each with its own subscription.
 type ProjectorBundle struct {
 	Runners []*projector.Runner
+	// Lag serves /metrics and /health/live. A projector with no HTTP surface
+	// can only be probed on "is the process alive", which is precisely the
+	// question that does not matter — one can be alive and twenty minutes
+	// behind, serving a read model that disagrees with the log.
+	Lag     *projector.LagReporter
 	Queries queryStores
 	Cleanup func()
 }
@@ -97,15 +102,26 @@ func BuildProjector(ctx context.Context, log logger.Logger, opts ProjectorOption
 	checkpoints := projector.NewPostgresCheckpoints(pool)
 	transactor := database.NewPoolTransactor(pool)
 
-	runners := make([]*projector.Runner, 0, 5)
-	for _, def := range projectionDefs(q) {
+	defs := projectionDefs(q)
+	runners := make([]*projector.Runner, 0, len(defs))
+	names := make([]string, 0, len(defs))
+	for _, def := range defs {
 		runners = append(runners, projector.NewRunner(def, deps.feed, deps.codec, checkpoints, transactor, slog.Default()))
+		names = append(names, def.Name)
+	}
+
+	head, ok := deps.store.(eventstore.Headed)
+	if !ok {
+		storeCleanup()
+		pool.Close()
+		return nil, fmt.Errorf("the projector needs a store that can report its log head, for lag")
 	}
 
 	log.Info("projector wired", "projections", len(runners), "postgres_host_sanitised", sanitiseDSN(url))
 
 	return &ProjectorBundle{
 		Runners: runners,
+		Lag:     projector.NewLagReporter(checkpoints, head, names),
 		Queries: q,
 		Cleanup: func() {
 			storeCleanup()
