@@ -90,17 +90,22 @@ func RunAsync(ctx context.Context, log logger.Logger, d deps, opts AsyncOptions)
 		}()
 	}
 
-	// The reactor gets its own subscription too. It reads from the start of
-	// the log rather than a checkpoint: processes are idempotent by
-	// construction, so replaying is safe, and in phase 3 the deployed reactor
-	// moves to a persistent subscription where KurrentDB owns the position.
+	// The reactor gets a subscription of its own, and a different kind: a
+	// persistent one where the server owns the position, so a transient fault
+	// redelivers one message instead of stalling everything, and a message
+	// that can never succeed is parked rather than blocking the queue.
 	router := buildReactorRouter(d.store, d.codec)
 	wg.Add(1)
 	go func() {
 		defer wg.Done()
-		err := d.feed.SubscribeAll(ctx, eventstore.Start, func(rec eventstore.Recorded) error {
-			return router.Handle(ctx, rec)
-		})
+		var err error
+		if persistent, ok := d.store.(eventstore.PersistentFeed); ok {
+			err = router.Consume(ctx, persistent, ReactorGroup)
+		} else {
+			err = d.feed.SubscribeAll(ctx, eventstore.Start, func(rec eventstore.Recorded) error {
+				return router.Handle(ctx, rec)
+			})
+		}
 		if err != nil && !errors.Is(err, context.Canceled) {
 			log.Error("async: reactor stopped", "err", err)
 		}

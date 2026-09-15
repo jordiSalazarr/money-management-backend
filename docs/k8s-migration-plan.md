@@ -608,7 +608,7 @@ The codec hard-errors on an unknown event type, deliberately: for a stream we ow
 
 So: **`$all` with a filter, not a subscription per category.** Global ordering is preserved, which `MovementsProjector` and the sweeper both depend on. The one trap is that adding a category to `payments/streams` without adding it to `All()` means its events are never projected — which is why `All()` sits directly beneath the category constants.
 
-### Phase 3 — Replace the Kinesis pipeline
+### Phase 3 — Replace the Kinesis pipeline — **DONE**
 
 - `projector.Dispatcher` keeps its subscriber fan-out but takes the codec; `HandleBatch([]KinesisEventRecord)` becomes `Handle(Recorded)`.
 - Five catch-up subscriptions, one per projection, each committing rows + checkpoint in one transaction (§6).
@@ -616,7 +616,27 @@ So: **`$all` with a filter, not a subscription per category.** Global ordering i
 - Reactor moves to a persistent subscription; `classify()` returns `Ack` / `Nack(Park)` / `Nack(Retry)` instead of `nil` / `error`. Permanent errors now write a terminal process event **before** acking — the behaviour change §4.1 is about.
 - Rewrite the `main.go`s: long-running loops with graceful shutdown for projector and reactor, run-once-and-exit for `recurring-cron`, `sweeper` and `migrate`. Drop `aws-lambda-go` from all of them.
 
-**Done when**: `docker compose up` runs the whole stack and local topology matches §2 exactly.
+**Done when**: `docker compose up` runs the whole stack and local topology matches §2 exactly. It does — `make dev-stack` boots KurrentDB + Postgres + the API with five independently-checkpointed projections and the reactor on a persistent subscription, verified by a transfer completing end to end and the subscription group reading `Live` in KurrentDB.
+
+#### What implementing it turned up
+
+**An in-process cache cannot coexist with a checkpoint.** Three projections kept one to avoid a round trip. A projection resuming from a checkpoint starts with an empty cache and a populated table, so every entity created before the checkpoint misses — the caches only ever worked because the old pipeline always replayed the whole log. They are gone; projections are stateless and read through their store, which is also what makes them correct with more than one replica.
+
+**`Subscriber.Handle` had to start returning an error.** Without it a projection that failed to write would still advance its checkpoint, leaving a permanent hole that nothing would notice. Now the rows and the position share a transaction and a failure rolls back both.
+
+**Two bugs surfaced that the phase-1 reviews missed.** `wallets_projection` never handled `MoneyRefunded`, so after a compensated transfer the projected balance sat below the aggregate forever — and the projected number is the one a person sees. And migrations `008`/`009` were missing their `-- +migrate Up` annotations, so `009` had been dead since phase 1; nothing had run migrations, so nothing had noticed.
+
+**`MemoryCheckpoints` needed a mutex.** Five runners share one. Every single-runner test passed and `go test -race` never saw it, because the race only exists when runners actually run at the same time.
+
+#### Retry, park, or done
+
+The reactor's three outcomes are the point of the persistent subscription, and they replace a two-outcome scheme where a permanent rejection took the same path as success:
+
+| | |
+|---|---|
+| **Done** | Handled — including a rule-based rejection, because the process has already recorded its terminal outcome. The work is done; the answer was just "no". |
+| **Retry** | A transient fault. Redelivery is free: every step carries an idempotency key. The classifier biases here, because retrying something that would have succeeded costs a redelivery while parking it costs a person noticing. |
+| **Park** | It cannot improve. An unregistered event type will not become registered by being redelivered, and retrying forever would block every process behind it. Parking is logged at ERROR — a parked message nobody looks at is the silent drop again, in a different queue. |
 
 ### Phase 4 — Containers, kind, Helm
 

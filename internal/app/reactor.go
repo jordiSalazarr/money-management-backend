@@ -25,18 +25,33 @@ type ReactorOptions struct {
 // long-lived connections), but the field stays for parity with the
 // projector / engine entry points.
 type ReactorBundle struct {
-	Router  *reactor.Router
-	Feed    eventstore.Feed
-	Cleanup func()
+	Router *reactor.Router
+	// Persistent is the server-managed subscription the reactor consumes when
+	// the store offers one. Nil falls back to a catch-up subscription.
+	Persistent eventstore.PersistentFeed
+	Feed       eventstore.Feed
+	Cleanup    func()
 }
 
-// Run subscribes and reacts until ctx is cancelled.
+// ReactorGroup is the persistent subscription group name. Changing it starts
+// the reactor over from the beginning of the log, which is safe — every
+// process step is idempotent — but will re-drive everything.
+const ReactorGroup = "money-management-reactor"
+
+// Run consumes until ctx is cancelled.
 //
-// Returning an error from the handler stops the subscription, which is what a
-// transient fault should do: the position is not advanced, so redelivery picks
-// up exactly where it left off. Permanent, rule-based rejections never reach
-// here — each process records its own terminal outcome and returns nil.
+// It prefers a persistent subscription, which is what a reactor actually
+// wants: the server owns the position, a transient fault redelivers that one
+// message rather than stalling everything behind it, and a message that can
+// never succeed is parked instead of blocking the queue forever.
+//
+// The catch-up fallback exists for stores with no such facility. It is
+// strictly worse — one bad message stops the subscription — but it is better
+// than not running at all.
 func (b *ReactorBundle) Run(ctx context.Context) error {
+	if b.Persistent != nil {
+		return b.Router.Consume(ctx, b.Persistent, ReactorGroup)
+	}
 	return b.Feed.SubscribeAll(ctx, eventstore.Start, func(rec eventstore.Recorded) error {
 		return b.Router.Handle(ctx, rec)
 	})
@@ -72,10 +87,13 @@ func BuildReactor(ctx context.Context, log logger.Logger, opts ReactorOptions) (
 		log.Info("reactor wired", "events_table", eventsTable)
 	}
 
+	persistent, _ := deps.store.(eventstore.PersistentFeed)
+
 	return &ReactorBundle{
-		Router:  router,
-		Feed:    deps.feed,
-		Cleanup: cleanup,
+		Router:     router,
+		Persistent: persistent,
+		Feed:       deps.feed,
+		Cleanup:    cleanup,
 	}, nil
 }
 

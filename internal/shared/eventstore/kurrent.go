@@ -329,9 +329,10 @@ func mapKurrentErr(err error) error {
 }
 
 var (
-	_ Store  = (*KurrentStore)(nil)
-	_ Feed   = (*KurrentStore)(nil)
-	_ Headed = (*KurrentStore)(nil)
+	_ Store          = (*KurrentStore)(nil)
+	_ Feed           = (*KurrentStore)(nil)
+	_ Headed         = (*KurrentStore)(nil)
+	_ PersistentFeed = (*KurrentStore)(nil)
 )
 
 // Head returns the position of the last event in $all, or Start when the log
@@ -363,4 +364,104 @@ func (s *KurrentStore) Head(ctx context.Context) (Position, error) {
 		return Start, nil
 	}
 	return Position{Commit: resolved.Event.Position.Commit, Prepare: resolved.Event.Position.Prepare}, nil
+}
+
+// SubscribePersistent consumes a server-managed subscription group over $all.
+//
+// This is the reactor's subscription, and it differs from the projector's in
+// the two ways that matter for a process: KurrentDB owns the position, so a
+// crash resumes where the acknowledgements got to rather than where a
+// checkpoint was written; and each message is acknowledged individually, so a
+// transient fault redelivers that one message instead of stalling everything
+// behind it.
+//
+// The group is created on first use. Creating it is idempotent in effect —
+// an already-exists error is the normal case after the first boot.
+func (s *KurrentStore) SubscribePersistent(ctx context.Context, group string, handler func(Delivery) Disposition) error {
+	if err := s.ensureGroup(ctx, group); err != nil {
+		return err
+	}
+
+	sub, err := s.client.SubscribeToPersistentSubscriptionToAll(ctx, group,
+		kurrentdb.SubscribeToPersistentSubscriptionOptions{})
+	if err != nil {
+		return mapKurrentErr(err)
+	}
+	defer sub.Close()
+
+	for {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+
+		event := sub.Recv()
+		switch {
+		case event.SubscriptionDropped != nil:
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			return fmt.Errorf("persistent subscription %s dropped: %w", group, event.SubscriptionDropped.Error)
+
+		case event.EventAppeared != nil:
+			resolved := event.EventAppeared.Event
+			if resolved == nil || resolved.Event == nil {
+				continue
+			}
+
+			rec, err := recordedFrom(resolved.Event)
+			if err != nil {
+				// Undecodable at the envelope level. Retrying cannot help, and
+				// blocking the subscription on it would stop every process.
+				if nackErr := sub.Nack(err.Error(), kurrentdb.NackActionPark, resolved); nackErr != nil {
+					return fmt.Errorf("parking malformed event in %s: %w", group, nackErr)
+				}
+				continue
+			}
+
+			delivery := Delivery{Recorded: rec, RetryCount: event.EventAppeared.RetryCount}
+			if err := s.settle(sub, resolved, handler(delivery)); err != nil {
+				return fmt.Errorf("acknowledging in %s: %w", group, err)
+			}
+
+		default:
+			// A checkpoint notification. Nothing to hand on.
+			continue
+		}
+	}
+}
+
+func (s *KurrentStore) settle(sub *kurrentdb.PersistentSubscription, resolved *kurrentdb.ResolvedEvent, d Disposition) error {
+	switch d {
+	case Retry:
+		return sub.Nack("transient failure", kurrentdb.NackActionRetry, resolved)
+	case Park:
+		return sub.Nack("will not succeed on retry", kurrentdb.NackActionPark, resolved)
+	default:
+		return sub.Ack(resolved)
+	}
+}
+
+// ensureGroup creates the subscription group if it is not already there.
+//
+// It starts from the beginning of the log and carries the same category filter
+// as the catch-up subscription, for the same reason: $all is the whole
+// database, and a foreign event reaching the codec would be parked pointlessly.
+func (s *KurrentStore) ensureGroup(ctx context.Context, group string) error {
+	settings := kurrentdb.SubscriptionSettingsDefault()
+
+	err := s.client.CreatePersistentSubscriptionToAll(ctx, group, kurrentdb.PersistentAllSubscriptionOptions{
+		Settings:  &settings,
+		StartFrom: kurrentdb.Start{},
+		Filter:    s.filter(),
+	})
+	if err == nil {
+		return nil
+	}
+
+	// Already there — the normal case on every boot after the first.
+	var kErr *kurrentdb.Error
+	if errors.As(err, &kErr) && kErr.IsErrorCode(kurrentdb.ErrorCodeResourceAlreadyExists) {
+		return nil
+	}
+	return fmt.Errorf("creating persistent subscription %s: %w", group, mapKurrentErr(err))
 }

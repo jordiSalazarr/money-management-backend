@@ -141,3 +141,60 @@ func (r Recorded) Meta() EventMetadata {
 type Subscriber interface {
 	Handle(event any, meta EventMetadata) error
 }
+
+// Disposition is what a consumer tells the server about a message it was
+// handed. It exists because a reactor's failures are not all alike, and
+// treating them alike is what lost money before: a permanent rejection dropped
+// with a log line looked exactly like a transient one that would be retried.
+type Disposition int
+
+const (
+	// Done: handled. Do not redeliver.
+	//
+	// This covers a rule-based rejection too. The process has already recorded
+	// its terminal outcome, so the work IS done — there is simply nothing more
+	// to try.
+	Done Disposition = iota
+
+	// Retry: a transient fault. Redeliver; idempotency keys make that free.
+	Retry
+
+	// Park: this will never succeed. Move it aside rather than let it block
+	// the subscription forever, and leave it where a person can find it.
+	Park
+)
+
+func (d Disposition) String() string {
+	switch d {
+	case Done:
+		return "done"
+	case Retry:
+		return "retry"
+	case Park:
+		return "park"
+	default:
+		return "unknown"
+	}
+}
+
+// Delivery is one message from a persistent subscription.
+type Delivery struct {
+	Recorded
+	// RetryCount is how many times this message has already been redelivered.
+	// A consumer can use it to give up on its own terms rather than relying
+	// solely on the server's limit.
+	RetryCount int
+}
+
+// PersistentFeed is a server-managed subscription: the server owns the
+// position, redelivers what is not acknowledged, and parks what keeps failing.
+//
+// The projector deliberately does not use this. Projections need total
+// ordering and a checkpoint we control so one can be rebuilt alone; reactors
+// need per-message retry and a dead-letter path, and are idempotent by
+// construction. Different needs, different subscription.
+type PersistentFeed interface {
+	// SubscribePersistent joins the named group, creating it if it does not
+	// exist, and consumes until ctx is done.
+	SubscribePersistent(ctx context.Context, group string, handler func(Delivery) Disposition) error
+}

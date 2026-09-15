@@ -170,6 +170,9 @@ Two ports, in `shared/eventstore/store.go`:
 - Revisions are **0-based**; `NoStream` (-1) asserts a stream does not exist yet.
 - Appending at `NoStream` to a deterministically-named stream is how occurrences dedupe: **the stream name is the idempotency key**, so there is no dedup table.
 - There is no `AppendMulti`. Nothing writes two aggregates at once — that is what processes are for.
+- **Projections and reactors use different subscriptions on purpose.** A projection gets a catch-up subscription with a checkpoint we own, because it needs total ordering and the ability to be rebuilt alone. A reactor gets a persistent subscription where KurrentDB owns the position, because it needs per-message retry and a park queue. Do not unify them.
+- **A projection holds no state between events.** It reads through its store. An in-memory cache cannot coexist with a checkpoint: resuming from one means an empty cache and a populated table, so everything created before the checkpoint misses.
+- **`Subscriber.Handle` returns an error, and you must propagate it.** The checkpoint commits in the same transaction as the rows; swallowing an error advances the position past work that never happened.
 - **`SubscribeAll` is filtered to `streams.All()`.** `$all` is the whole database; the codec treats an unknown type as a fault, so an unfiltered subscription would stop the entire read side the first time it met a foreign event. Add a category to `payments/streams` and you must add it to `All()`, or its events are never projected.
 
 ### Cross-aggregate processes
@@ -245,7 +248,9 @@ Miro (visual event model) → `specs/<slice>.md` (markdown) → skill normalizes
 
 ```bash
 go test ./...          # run all tests (memory store)
-make test-kurrent      # contract + saga tests against a real KurrentDB container
+make test-kurrent      # contract + saga tests against a real KurrentDB container (stop dev-stack first)
+make dev-stack         # KurrentDB + Postgres + API, the full local topology
+make dev-nuke          # wipe the event store AND the projections, then re-migrate
 go test ./internal/payments/eventcatalog -update   # regenerate event fixtures after a version bump
 go vet ./...           # vet code
 go build ./...         # verify compilation

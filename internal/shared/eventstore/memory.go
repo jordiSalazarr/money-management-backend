@@ -2,6 +2,7 @@ package eventstore
 
 import (
 	"context"
+	"fmt"
 	"sync"
 )
 
@@ -15,6 +16,8 @@ type MemoryStore struct {
 	streams map[string][]int // stream key -> indices into log
 	log     []Recorded       // the global ordered log; index is the position
 	closed  bool
+	// parked holds messages a persistent subscriber gave up on, per group.
+	parked map[string][]Recorded
 }
 
 func NewMemoryStore() *MemoryStore {
@@ -126,9 +129,10 @@ func (s *MemoryStore) Close() {
 }
 
 var (
-	_ Store  = (*MemoryStore)(nil)
-	_ Feed   = (*MemoryStore)(nil)
-	_ Headed = (*MemoryStore)(nil)
+	_ Store          = (*MemoryStore)(nil)
+	_ Feed           = (*MemoryStore)(nil)
+	_ Headed         = (*MemoryStore)(nil)
+	_ PersistentFeed = (*MemoryStore)(nil)
 )
 
 // Head returns the position of the last event in the global log, or Start when
@@ -144,4 +148,81 @@ func (s *MemoryStore) Head(_ context.Context) (Position, error) {
 		return Start, nil
 	}
 	return s.log[len(s.log)-1].Position, nil
+}
+
+// SubscribePersistent is the in-process stand-in for a server-managed
+// subscription.
+//
+// It is a real implementation, not a stub: Retry actually redelivers and Park
+// actually sets the message aside, so the reactor's disposition logic can be
+// exercised without a container. What it does not imitate is durability — the
+// position lives in this process, so a restart starts over. That is the same
+// bargain MemoryStore makes everywhere else.
+func (s *MemoryStore) SubscribePersistent(ctx context.Context, group string, handler func(Delivery) Disposition) error {
+	cursor := 0
+	retries := make(map[string]int)
+
+	stop := context.AfterFunc(ctx, func() {
+		s.mu.Lock()
+		defer s.mu.Unlock()
+		s.cond.Broadcast()
+	})
+	defer stop()
+
+	for {
+		s.mu.Lock()
+		for cursor >= len(s.log) && ctx.Err() == nil && !s.closed {
+			s.cond.Wait()
+		}
+		if ctx.Err() != nil {
+			s.mu.Unlock()
+			return ctx.Err()
+		}
+		if s.closed && cursor >= len(s.log) {
+			s.mu.Unlock()
+			return nil
+		}
+		rec := s.log[cursor]
+		s.mu.Unlock()
+
+		key := fmt.Sprintf("%d", rec.Position.Commit)
+		switch handler(Delivery{Recorded: rec, RetryCount: retries[key]}) {
+		case Retry:
+			retries[key]++
+			// Redeliver by not advancing. A real server would back off; here
+			// the cap stops a permanently-failing handler spinning forever.
+			if retries[key] >= memoryMaxRetries {
+				s.park(group, rec)
+				cursor++
+			}
+		case Park:
+			s.park(group, rec)
+			cursor++
+		default:
+			cursor++
+		}
+	}
+}
+
+// memoryMaxRetries mirrors what a persistent subscription's retry limit does:
+// stop redelivering eventually and park instead.
+const memoryMaxRetries = 5
+
+func (s *MemoryStore) park(group string, rec Recorded) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.parked == nil {
+		s.parked = make(map[string][]Recorded)
+	}
+	s.parked[group] = append(s.parked[group], rec)
+}
+
+// Parked returns the messages set aside for a group. A real deployment reads
+// these out of KurrentDB's park queue; tests read them from here.
+func (s *MemoryStore) Parked(group string) []Recorded {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := make([]Recorded, len(s.parked[group]))
+	copy(out, s.parked[group])
+	return out
 }
