@@ -20,7 +20,7 @@ import (
 )
 
 // ProjectorOptions configures BuildProjector. AuroraURL is the Postgres
-// connection string injected by the Lambda runtime; an empty AuroraURL
+// connection string; an empty AuroraURL
 // falls back to the AURORA_URL env var so callers can pass {} for the
 // common case.
 type ProjectorOptions struct {
@@ -78,7 +78,7 @@ func BuildProjector(ctx context.Context, log logger.Logger, opts ProjectorOption
 
 	q := buildAuroraQueryStores(pool)
 
-	mode, err := resolveStoreMode(Options{DefaultStore: StoreModeDynamoDB})
+	mode, err := resolveStoreMode(Options{DefaultStore: StoreModeKurrentDB})
 	if err != nil {
 		pool.Close()
 		return nil, fmt.Errorf("resolving STORE: %w", err)

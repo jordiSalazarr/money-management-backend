@@ -1,44 +1,51 @@
-// cmd/recurring-cron is the EventBridge-triggered Lambda that scans
-// Aurora's recurring_movements_view for items whose next_due_date has
-// passed and dispatches an ExecuteRecurringMovement command for each.
+// Command recurring-cron opens an occurrence for every recurring movement
+// whose next due date has passed, then exits.
 //
-// The recurring aggregate's ErrAlreadyExecutedToday and ErrNotActive
-// guards make repeat invocations safe — the cron firing at 00:00 UTC
-// the next day still picks up any rows that yesterday's firing missed.
+// It only OFFERS the work. Whether the money can actually move is the
+// occurrence reactor's business, and its outcome — executed or skipped — is
+// recorded there. That separation is the fix for the old behaviour, where the
+// cron marked a date executed before anything had been paid.
 //
-// The handler returns a small JSON envelope with counts so a manual
-// `aws lambda invoke` shows what happened.
+// Repeat runs are safe by construction: an occurrence's stream is named from
+// the recurring movement and the date, and is opened at ExpectedRevision
+// NoStream, so a second run for the same date collides instead of firing
+// twice. A run that missed its slot catches up rather than skipping, because
+// the query matches every date that has passed, not only today's.
 package main
 
 import (
 	"context"
+	"encoding/json"
 	"log"
 	"os"
-
-	"github.com/aws/aws-lambda-go/lambda"
+	"time"
 
 	"github.com/jordisalazar/money-management/internal/app"
 	"github.com/jordisalazar/money-management/pkg/logger"
 )
 
-var bundle *app.RecurringCronBundle
+func main() {
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer cancel()
 
-func init() {
-	if os.Getenv("SKIP_LAMBDA_INIT") == "1" {
-		return
-	}
 	logr := logger.New()
-	b, err := app.BuildRecurringCron(context.Background(), logr, app.RecurringCronOptions{})
+	bundle, err := app.BuildRecurringCron(ctx, logr, app.RecurringCronOptions{})
 	if err != nil {
 		log.Fatalf("build recurring cron: %v", err)
 	}
-	bundle = b
-}
+	defer bundle.Cleanup()
 
-func handler(ctx context.Context) (app.RecurringCronResponse, error) {
-	return bundle.Run(ctx)
-}
+	resp, err := bundle.Run(ctx)
+	if err != nil {
+		logr.Error("recurring cron failed", "error", err)
+		os.Exit(1)
+	}
 
-func main() {
-	lambda.Start(handler)
+	out, _ := json.Marshal(resp)
+	os.Stdout.Write(append(out, '\n'))
+
+	if len(resp.Failures) > 0 {
+		logr.Error("recurring cron finished with failures", "count", len(resp.Failures))
+		os.Exit(1)
+	}
 }

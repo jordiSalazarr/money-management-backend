@@ -15,12 +15,12 @@ import (
 )
 
 // ReactorOptions configures BuildReactor. Both fields fall back to env
-// vars when empty so the Lambda init path can pass {}.
+// vars when empty, so callers can pass {}.
 type ReactorOptions struct {
 	EventsTable string
 }
 
-// ReactorBundle is what cmd/reactor exposes through its Lambda handler.
+// ReactorBundle is what cmd/reactor runs.
 // Cleanup is a no-op for the reactor today (the DDB store doesn't open
 // long-lived connections), but the field stays for parity with the
 // projector / engine entry points.
@@ -68,7 +68,7 @@ func BuildReactor(ctx context.Context, log logger.Logger, opts ReactorOptions) (
 		return nil, fmt.Errorf("EVENTS_TABLE must be set to build the reactor")
 	}
 
-	mode, err := resolveStoreMode(Options{DefaultStore: StoreModeDynamoDB})
+	mode, err := resolveStoreMode(Options{DefaultStore: StoreModeKurrentDB})
 	if err != nil {
 		return nil, fmt.Errorf("resolving STORE: %w", err)
 	}

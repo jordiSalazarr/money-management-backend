@@ -25,15 +25,16 @@ import (
 type deps struct {
 	mode  StoreMode
 	store eventstore.Store
-	// feed is nil for stores with no global log. DynamoDB is one: its read
-	// side is a Kinesis export, not a subscription. Anything that needs a
-	// feed must check.
+	// feed is the read side. Both remaining stores provide one; the field
+	// stays a pointer-able interface so a future store without a global log
+	// fails loudly at wiring time rather than at first event.
 	feed  eventstore.Feed
 	codec *eventstore.Codec
 
 	// queriesReady is true only when read-model projection stores were
-	// constructed alongside the event store. Memory mode wires them in
-	// process; dynamodb mode wires them only when AURORA_URL is set.
+	// constructed alongside the event store. Memory mode always wires them;
+	// KurrentDB mode wires Postgres-backed ones when AURORA_URL is set and
+	// in-memory ones otherwise.
 	queriesReady bool
 	queries      queryStores
 
@@ -55,10 +56,10 @@ func resolveStoreMode(opts Options) (StoreMode, error) {
 		return opts.DefaultStore, nil
 	}
 	switch StoreMode(raw) {
-	case StoreModeDynamoDB, StoreModeMemory, StoreModeKurrentDB:
+	case StoreModeMemory, StoreModeKurrentDB:
 		return StoreMode(raw), nil
 	default:
-		return "", fmt.Errorf("unknown STORE=%q (want kurrentdb|memory|dynamodb)", raw)
+		return "", fmt.Errorf("unknown STORE=%q (want kurrentdb|memory)", raw)
 	}
 }
 
@@ -66,8 +67,6 @@ func resolveStoreMode(opts Options) (StoreMode, error) {
 // lifecycle and returns a cleanup func; on error nothing leaks.
 func buildDeps(ctx context.Context, log logger.Logger, mode StoreMode) (deps, func(), error) {
 	switch mode {
-	case StoreModeDynamoDB:
-		return buildDynamoDeps(ctx, log)
 	case StoreModeKurrentDB:
 		return buildKurrentDeps(ctx, log)
 	case StoreModeMemory:
@@ -75,52 +74,6 @@ func buildDeps(ctx context.Context, log logger.Logger, mode StoreMode) (deps, fu
 	default:
 		return deps{}, nil, fmt.Errorf("unsupported store mode: %s", mode)
 	}
-}
-
-func buildDynamoDeps(ctx context.Context, log logger.Logger) (deps, func(), error) {
-	eventsTable := os.Getenv("EVENTS_TABLE")
-	if eventsTable == "" {
-		return deps{}, nil, fmt.Errorf("EVENTS_TABLE must be set when STORE=dynamodb")
-	}
-
-	store, err := eventstore.NewDynamoStore(ctx, eventsTable)
-	if err != nil {
-		return deps{}, nil, fmt.Errorf("building dynamo event store: %w", err)
-	}
-	codec := eventcatalog.NewCodec()
-
-	log.Info("dynamodb store wired", "events_table", eventsTable)
-
-	// AURORA_URL is optional. When set we additionally open a pgxpool and
-	// build the Postgres-backed projection stores so GET handlers can
-	// serve real data. When unset, the lambda runs POST-only and GETs 404.
-	auroraURL := os.Getenv("AURORA_URL")
-	if auroraURL == "" {
-		log.Info("AURORA_URL unset — GET handlers stay off (post-only mode)")
-		return deps{
-			mode:        StoreModeDynamoDB,
-			store:       store,
-			codec:       codec,
-			checkpoints: projector.NewMemoryCheckpoints(),
-			transactor:  projector.NoTransactor{},
-		}, func() {}, nil
-	}
-
-	pool, err := pgxpool.New(ctx, auroraURL)
-	if err != nil {
-		return deps{}, nil, fmt.Errorf("connecting to aurora: %w", err)
-	}
-	log.Info("aurora projection stores wired", "aurora_host_sanitised", sanitiseDSN(auroraURL))
-
-	return deps{
-		mode:         StoreModeDynamoDB,
-		store:        store,
-		codec:        codec,
-		queries:      buildAuroraQueryStores(pool),
-		queriesReady: true,
-		checkpoints:  projector.NewPostgresCheckpoints(pool),
-		transactor:   database.NewPoolTransactor(pool),
-	}, pool.Close, nil
 }
 
 // buildKurrentDeps wires the real event store. Projections go to Postgres when

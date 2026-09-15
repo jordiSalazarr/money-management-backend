@@ -16,7 +16,7 @@ import (
 // a cleanup func that callers should defer.
 //
 // The shape of the returned closure (nil-safe, always returnable) lets
-// the Lambda entry point ignore it without special-casing — cmd/server
+// entry points without read models ignore it without special-casing — cmd/server
 // just defers it like a Close().
 func BuildEngine(ctx context.Context, log logger.Logger, opts Options) (*gin.Engine, func(), error) {
 	mode, err := resolveStoreMode(opts)
@@ -34,7 +34,11 @@ func BuildEngine(ctx context.Context, log logger.Logger, opts Options) (*gin.Eng
 	r.Use(middleware.CORS())
 	r.Use(middleware.Correlation())
 	r.Use(middleware.Logging(log))
-	r.Use(middleware.CognitoAuth([]string{"/swagger/"}, nil))
+	// Probes are unauthenticated: kubelet sends no credentials, so an
+	// authenticated probe would fail every time and the pod would never
+	// become ready. They expose no data — a status and which dependency is
+	// unreachable.
+	r.Use(middleware.Auth([]string{"/swagger/", "/health/"}, authVerifier(log)))
 
 	mountQueries := opts.MountQueryRoutes && d.queriesReady
 
@@ -52,6 +56,7 @@ func BuildEngine(ctx context.Context, log logger.Logger, opts Options) (*gin.Eng
 	mountVoice := mountQueries // voice depends on projection stores too
 	logVoiceDecision(log, mountQueries, voiceOpts)
 
+	registerHealth(r, d)
 	registerRoutes(ctx, r, d.store, d.codec, voiceOpts, transOpts, mountVoice, d.queries, applyMountQueries(opts, mountQueries))
 
 	// The read side runs in-process when the store has a global log.
@@ -97,4 +102,23 @@ func logVoiceDecision(log logger.Logger, mountQueries bool, opts voice.ClientOpt
 	default:
 		log.Info("voice assistant enabled — Bedrock", "model", opts.BedrockModelID)
 	}
+}
+
+// authVerifier builds the token verifier from the environment.
+//
+// An empty OIDC_ISSUER means local development, where the X-Dev-User header
+// stands in for a login. Setting it turns on signature verification AND turns
+// that header off — the two cannot both be live, so a deployment cannot end up
+// trusting a self-asserted header because its token check was misconfigured.
+func authVerifier(log logger.Logger) *middleware.OIDCVerifier {
+	config := middleware.OIDCConfig{
+		Issuer:   os.Getenv("OIDC_ISSUER"),
+		Audience: os.Getenv("OIDC_AUDIENCE"),
+	}
+	if !config.Enabled() {
+		log.Warn("OIDC_ISSUER unset — accepting the X-Dev-User header. Never run a deployed build like this.")
+		return nil
+	}
+	log.Info("oidc verification enabled", "issuer", config.Issuer, "audience", config.Audience)
+	return middleware.NewOIDCVerifier(config)
 }

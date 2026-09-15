@@ -10,7 +10,6 @@ import (
 
 	"github.com/jackc/pgx/v5/pgxpool"
 
-	"github.com/jordisalazar/money-management/internal/payments/eventcatalog"
 	occurrencedomain "github.com/jordisalazar/money-management/internal/payments/processes/occurrence/domain"
 	"github.com/jordisalazar/money-management/internal/payments/recurringmovement/domain"
 	"github.com/jordisalazar/money-management/internal/payments/streams"
@@ -29,15 +28,13 @@ type DueItemsSource interface {
 // given date. Tests inject a fake to assert call shape.
 type DispatchExecuteFunc func(ctx context.Context, id string, executedFor time.Time) error
 
-// RecurringCronOptions configures BuildRecurringCron. AuroraURL and
-// EventsTable fall back to env vars when empty.
+// RecurringCronOptions configures BuildRecurringCron. Both fields fall back to
+// env vars when empty.
 type RecurringCronOptions struct {
-	AuroraURL   string
-	EventsTable string
+	AuroraURL string
 }
 
-// RecurringCronBundle is what cmd/recurring-cron exposes through its
-// Lambda handler. Run() is idempotent enough to be invoked manually for
+// RecurringCronBundle is what cmd/recurring-cron runs. Run() is idempotent enough to be invoked manually for
 // catch-up runs without coordination — the recurring aggregate's
 // ErrAlreadyExecutedToday guard prevents double-execution per day.
 type RecurringCronBundle struct {
@@ -48,8 +45,8 @@ type RecurringCronBundle struct {
 }
 
 // RecurringCronResponse is returned from Run() and surfaces as the
-// Lambda invocation result, so a manual `aws lambda invoke` can see
-// what happened.
+// CronJob's stdout, so `kubectl logs` on the Job shows what the pass
+// actually did rather than only that it exited 0.
 type RecurringCronResponse struct {
 	DispatchedCount int      `json:"dispatched_count"`
 	SkippedCount    int      `json:"skipped_count"`
@@ -68,36 +65,30 @@ func BuildRecurringCron(ctx context.Context, log logger.Logger, opts RecurringCr
 		return nil, fmt.Errorf("AURORA_URL must be set to build the recurring cron")
 	}
 
-	eventsTable := opts.EventsTable
-	if eventsTable == "" {
-		eventsTable = os.Getenv("EVENTS_TABLE")
+	mode, err := resolveStoreMode(Options{DefaultStore: StoreModeKurrentDB})
+	if err != nil {
+		return nil, fmt.Errorf("resolving STORE: %w", err)
 	}
-	if eventsTable == "" {
-		return nil, fmt.Errorf("EVENTS_TABLE must be set to build the recurring cron")
+	deps, storeCleanup, err := buildDeps(ctx, log, mode)
+	if err != nil {
+		return nil, err
 	}
 
 	pool, err := pgxpool.New(ctx, auroraURL)
 	if err != nil {
-		return nil, fmt.Errorf("connecting to aurora: %w", err)
+		storeCleanup()
+		return nil, fmt.Errorf("connecting to postgres: %w", err)
 	}
-
-	store, err := eventstore.NewDynamoStore(ctx, eventsTable)
-	if err != nil {
-		pool.Close()
-		return nil, fmt.Errorf("building dynamo event store: %w", err)
-	}
-	codec := eventcatalog.NewCodec()
-	dispatch := NewDueDispatcher(store, codec)
 
 	if log != nil {
-		log.Info("recurring cron wired", "events_table", eventsTable, "aurora_host_sanitised", sanitiseDSN(auroraURL))
+		log.Info("recurring cron wired", "store", string(mode), "postgres_host_sanitised", sanitiseDSN(auroraURL))
 	}
 
 	return &RecurringCronBundle{
 		log:      slog.Default(),
 		source:   &auroraDueItemsSource{pool: pool},
-		dispatch: dispatch,
-		Cleanup:  pool.Close,
+		dispatch: NewDueDispatcher(deps.store, deps.codec),
+		Cleanup:  func() { pool.Close(); storeCleanup() },
 	}, nil
 }
 
