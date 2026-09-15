@@ -638,7 +638,7 @@ The reactor's three outcomes are the point of the persistent subscription, and t
 | **Retry** | A transient fault. Redelivery is free: every step carries an idempotency key. The classifier biases here, because retrying something that would have succeeded costs a redelivery while parking it costs a person noticing. |
 | **Park** | It cannot improve. An unregistered event type will not become registered by being redelivered, and retrying forever would block every process behind it. Parking is logged at ERROR — a parked message nobody looks at is the silent drop again, in a different queue. |
 
-### Phase 4 — Containers, kind, Helm
+### Phase 4 — Containers, kind, Helm — **written, verification pending**
 
 Manifests live in a **new sibling repo, `money-management-k8s`**, mirroring how `money-management-infra` owns Terraform today — and giving ArgoCD something to watch if phase 6 goes that way.
 
@@ -667,7 +667,15 @@ Decisions inside this phase:
 - **Web image needs runtime config**: `VITE_API_URL` is baked at build time today. An `envsubst` entrypoint generating `/config.js` keeps one image usable across environments.
 - **Probes**: API readiness checks both backends; the projector exposes **per-subscription** checkpoint lag (`$all` head position − stored checkpoint), labelled by subscription name, so liveness means something. The liveness signal is the *oldest* checkpoint.
 
-**Done when**: `helm install` boots the entire app on a fresh kind cluster and the seeded data round-trips.
+**Done when**: `helm install` boots the entire app on a fresh kind cluster and the seeded data round-trips. The chart is written and lints; the full run is blocked on Docker Desktop's memory allocation, which is 1.9 GB on this machine and needs about 4 GB. At 1.9 GB every pod scheduled and the node reached load average 64 with 32 MB free — the control plane alone could not answer.
+
+#### What trying to run it turned up
+
+Three faults that `helm lint` and `helm template` cannot see, which is the argument for running a chart rather than reading it:
+
+- **A `pre-install` hook cannot migrate a database that ships in the same chart.** Hooks run before *every* chart resource, so on a first install the migrate Job waited for a Postgres that did not exist yet and the install hung until it timed out. It is an ordinary Job now, and ordering is guaranteed instead by an init container on everything that reads the schema, polling for the last table the migrations create.
+- **`cmd/migrate` and `cmd/recurring-cron` were still Lambda binaries.** They waited for a Lambda runtime and crash-looped. Phase 3's run-once-and-exit rewrite had covered the projector and the reactor and missed these two.
+- **KurrentDB's standard projections were on.** Habit rather than reason: this application filters `$all` by stream-name prefix and uses neither `$ce-` nor `$et-`, so running them cost memory and CPU maintaining indexes nothing reads.
 
 ### Phase 4.5 — Decommission AWS
 
