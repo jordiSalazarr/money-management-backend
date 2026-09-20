@@ -22,6 +22,10 @@ import (
 //   - An issuer configured: the header is REFUSED, whatever it says, and only
 //     a signed token from that issuer will do.
 //
+// Whichever mode is in play, the identity is put through stableUserID before
+// it reaches the application, because the read models store user ids as
+// Postgres uuids and most providers' subjects are not UUIDs.
+//
 // Making them exclusive rather than a fallback chain is the whole safety
 // property. A fallback would mean that a deployment where the token check
 // failed — a misconfigured issuer, an unreachable JWKS — silently degraded to
@@ -41,13 +45,13 @@ func Auth(publicPaths []string, verifier *OIDCVerifier) gin.HandlerFunc {
 				unauthorized(c, "invalid or missing bearer token")
 				return
 			}
-			c.Request = c.Request.WithContext(WithUserID(c.Request.Context(), sub))
+			c.Request = c.Request.WithContext(WithUserID(c.Request.Context(), stableUserID(verifier.config.Issuer, sub)))
 			c.Next()
 			return
 		}
 
 		if userID := c.GetHeader("X-Dev-User"); userID != "" {
-			c.Request = c.Request.WithContext(WithUserID(c.Request.Context(), userID))
+			c.Request = c.Request.WithContext(WithUserID(c.Request.Context(), stableUserID("", userID)))
 			c.Next()
 			return
 		}
