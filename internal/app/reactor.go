@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
-	"os"
 
 	"github.com/jordisalazar/money-management/internal/payments/processes/debtsettlement"
 	"github.com/jordisalazar/money-management/internal/payments/processes/occurrence"
@@ -14,16 +13,14 @@ import (
 	"github.com/jordisalazar/money-management/pkg/logger"
 )
 
-// ReactorOptions configures BuildReactor. Both fields fall back to env
-// vars when empty, so callers can pass {}.
-type ReactorOptions struct {
-	EventsTable string
-}
+// ReactorOptions configures BuildReactor. Nothing to configure today — the
+// store is chosen by STORE and addressed by KURRENTDB_URL — but the parameter
+// stays for parity with the other Build* entry points.
+type ReactorOptions struct{}
 
 // ReactorBundle is what cmd/reactor runs.
-// Cleanup is a no-op for the reactor today (the DDB store doesn't open
-// long-lived connections), but the field stays for parity with the
-// projector / engine entry points.
+// Cleanup releases whatever buildDeps opened, and the field stays for parity
+// with the projector / engine entry points.
 type ReactorBundle struct {
 	Router *reactor.Router
 	// Persistent is the server-managed subscription the reactor consumes when
@@ -60,14 +57,6 @@ func (b *ReactorBundle) Run(ctx context.Context) error {
 // BuildReactor wires the event store and every process manager behind one
 // router.
 func BuildReactor(ctx context.Context, log logger.Logger, opts ReactorOptions) (*ReactorBundle, error) {
-	eventsTable := opts.EventsTable
-	if eventsTable == "" {
-		eventsTable = os.Getenv("EVENTS_TABLE")
-	}
-	if eventsTable == "" {
-		return nil, fmt.Errorf("EVENTS_TABLE must be set to build the reactor")
-	}
-
 	mode, err := resolveStoreMode(Options{DefaultStore: StoreModeKurrentDB})
 	if err != nil {
 		return nil, fmt.Errorf("resolving STORE: %w", err)
@@ -84,7 +73,7 @@ func BuildReactor(ctx context.Context, log logger.Logger, opts ReactorOptions) (
 	router := buildReactorRouter(deps.store, deps.codec)
 
 	if log != nil {
-		log.Info("reactor wired", "events_table", eventsTable)
+		log.Info("reactor wired", "store", mode)
 	}
 
 	persistent, _ := deps.store.(eventstore.PersistentFeed)
