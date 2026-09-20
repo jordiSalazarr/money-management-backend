@@ -323,6 +323,13 @@ func mapKurrentErr(err error) error {
 			return ErrConcurrencyConflict
 		case kErr.IsErrorCode(kurrentdb.ErrorCodeResourceNotFound):
 			return ErrAggregateNotFound
+		case kErr.IsErrorCode(kurrentdb.ErrorCodeConnectionClosed):
+			// Terminal for this client. The SDK closes itself when the
+			// connection drops — which happens whenever KurrentDB restarts —
+			// and every later call fails the same way. Nothing reopens it, so
+			// this has to travel up as something distinguishable rather than
+			// as one more "store is unhappy" error.
+			return fmt.Errorf("%w: %w", ErrConnectionClosed, err)
 		}
 	}
 	return fmt.Errorf("kurrentdb: %w", err)

@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"errors"
 	"net/http"
 	"time"
 
@@ -16,10 +17,31 @@ import (
 // it?", readiness asks "should traffic come here yet?". A dependency being
 // unreachable is a readiness problem — restarting the pod will not fix
 // KurrentDB — so it must never fail liveness.
+//
+// There is exactly one exception, and it was found the hard way. When
+// KurrentDB restarts, the client in this process closes itself permanently:
+// every later call returns ErrConnectionClosed, nothing re-dials, and the API
+// serves 503 forever while looking perfectly alive. The projector and the
+// reactor survive the same event only because they crash and get restarted.
+//
+// That case inverts the rule above. The fault is not "the dependency is
+// down", it is "our client is dead", and restarting the pod is precisely the
+// cure. So liveness fails on that one error and on nothing else: a store that
+// is merely unreachable reports a different error, keeps liveness passing,
+// and is waited out by readiness as before.
 func registerHealth(r *gin.Engine, d deps) {
-	// Liveness: the process is running and serving. Deliberately checks
-	// nothing else.
+	// Liveness: the process is serving, and its event store client is not in
+	// the one state it cannot recover from on its own.
 	r.GET("/health/live", func(c *gin.Context) {
+		ctx, cancel := context.WithTimeout(c.Request.Context(), 2*time.Second)
+		defer cancel()
+
+		if err := checkEventStore(ctx, d); errors.Is(err, eventstore.ErrConnectionClosed) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{
+				"status": "event store client is closed and cannot reopen; restarting",
+			})
+			return
+		}
 		c.JSON(http.StatusOK, gin.H{"status": "ok"})
 	})
 
