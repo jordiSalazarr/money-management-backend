@@ -50,6 +50,7 @@ type ErrorResponse struct {
 // @Failure      400   {object}  ErrorResponse  "Validation error (invalid_amount, currency_mismatch, invalid_category, insufficient_funds)"
 // @Failure      401   {object}  ErrorResponse  "unauthorized"
 // @Failure      404   {object}  ErrorResponse  "wallet_not_found"
+// @Failure      409   {object}  ErrorResponse  "wallet_disabled, concurrency_conflict"
 // @Failure      500   {object}  ErrorResponse  "internal_error"
 // @Security     BearerAuth
 // @Router       /wallets/{id}/withdraw [post]
@@ -101,6 +102,8 @@ func mapError(err error) (int, ErrorResponse) {
 		return http.StatusBadRequest, ErrorResponse{ErrorCode: "insufficient_funds", Message: err.Error()}
 	case errors.Is(err, wallet.ErrWalletDisabled):
 		return http.StatusConflict, ErrorResponse{ErrorCode: "wallet_disabled", Message: err.Error()}
+	case errors.Is(err, eventstore.ErrConcurrencyConflict):
+		return http.StatusConflict, ErrorResponse{ErrorCode: "concurrency_conflict", Message: "the wallet was changed concurrently; please retry"}
 	case errors.Is(err, eventstore.ErrAggregateNotFound):
 		return http.StatusNotFound, ErrorResponse{ErrorCode: "wallet_not_found", Message: "wallet not found"}
 	default:
